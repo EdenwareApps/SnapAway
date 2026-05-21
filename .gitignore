@@ -130,7 +130,6 @@ dist
 .yarn/install-state.gz
 .pnp.*
 scripts/signtool.ps1
-/src/x-system
 
 # Local private modules and release material (kept outside OSS)
 /private/
