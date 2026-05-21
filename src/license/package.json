@@ -1,0 +1,9 @@
+{
+  "name": "snapaway-license",
+  "version": "1.0.0",
+  "description": "License management for SnapAway",
+  "main": "license.js",
+  "dependencies": {
+    "crypto": "^1.0.1"
+  }
+} 

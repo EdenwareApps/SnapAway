@@ -1,0 +1,21 @@
+{
+  "name": "icon-addon",
+  "version": "1.0.0",
+  "description": "Native icon extraction addon",
+  "main": "icon-wrapper.js",
+  "scripts": {
+    "build": "node-gyp rebuild",
+    "clean": "node-gyp clean",
+    "install": "node-gyp rebuild"
+  },
+  "keywords": ["icons", "native", "addon", "extraction"],
+  "author": "SnapAway",
+  "license": "MIT",
+  "dependencies": {
+    "node-addon-api": "^7.0.0"
+  },
+  "devDependencies": {
+    "node-gyp": "^10.0.0"
+  },
+  "gypfile": true
+} 

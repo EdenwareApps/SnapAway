@@ -1,0 +1,20 @@
+{
+  "name": "snapaway-audio-addon",
+  "version": "1.0.0",
+  "description": "Native audio control addon for SnapAway",
+  "main": "index.js",
+  "scripts": {
+    "install": "node-gyp rebuild",
+    "build": "node-gyp rebuild"
+  },
+  "dependencies": {
+    "node-addon-api": "^7.0.0"
+  },
+  "devDependencies": {
+    "node-gyp": "^10.0.1"
+  },
+  "gypfile": true,
+  "keywords": ["audio", "windows", "native", "addon"],
+  "author": "SnapAway Team",
+  "license": "MIT"
+} 

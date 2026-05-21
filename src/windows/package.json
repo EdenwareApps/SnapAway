@@ -1,0 +1,21 @@
+{
+  "name": "windows-addon",
+  "version": "1.0.0",
+  "description": "Native Windows API addon for window management",
+  "main": "windows-wrapper.js",
+  "scripts": {
+    "build": "node-gyp rebuild",
+    "clean": "node-gyp clean",
+    "install": "node-gyp rebuild"
+  },
+  "keywords": ["windows", "native", "addon", "window-management"],
+  "author": "SnapAway",
+  "license": "MIT",
+  "dependencies": {
+    "node-addon-api": "^7.0.0"
+  },
+  "devDependencies": {
+    "node-gyp": "^10.0.0"
+  },
+  "gypfile": true
+} 

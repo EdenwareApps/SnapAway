@@ -1,0 +1,34 @@
+# Private local modules
+private/
+
+# Certificates and signing material
+*.pfx
+*.p7x
+*.cer
+*.pem
+*.key
+*.snk
+
+# Sensitive config and dumps
+*.env
+.env*
+*secret*.json
+*token*.json
+*apikey*.json
+*license-key*.json
+PARTNER_CENTER_AUTH_REPORT_*.md
+
+# Build and diagnostic artifacts not meant for package publication
+out/
+dist/
+build/
+backup/
+bak/
+tmp_asar/
+out_asar_extract/
+.vscode/
+*.log
+*.dmp
+*.stackdump
+IAP-debug-summary.md
+IAP-delay-analysis.md

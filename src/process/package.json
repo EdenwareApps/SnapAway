@@ -1,0 +1,16 @@
+{
+  "name": "process-addon",
+  "version": "1.0.0",
+  "description": "Native addon for Windows process and window management",
+  "main": "process-wrapper.js",
+  "scripts": {
+    "build": "node-gyp rebuild",
+    "clean": "node-gyp clean"
+  },
+  "keywords": ["windows", "process", "window", "native"],
+  "author": "SnapAway",
+  "license": "MIT",
+  "dependencies": {
+    "node-addon-api": "^7.0.0"
+  }
+} 

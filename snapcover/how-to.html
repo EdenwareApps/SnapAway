@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>How to Use SnapAway — SnapAway</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="How to use SnapAway — quick start and tips">
+  <style>
+    :root{color-scheme: light; --brand:#0456d6; --muted:#6b7280}
+    body{font-family: -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial;margin:0;color:#111;background:#fff}
+    .site-header{background: linear-gradient(135deg, #0291c6 0%, #8200de 100%);border-bottom:1px solid rgba(0,0,0,0.06)}
+    .site-header .container{max-width:1160px;margin:0 auto;display:flex;align-items:center;justify-content:space-between;padding:10px 18px}
+    .brand{display:flex;align-items:center;text-decoration:none;color:var(--brand);font-weight:700}
+    .brand img{height:28px;margin-right:10px}
+    .main-nav{display:flex;gap:14px;align-items:center}
+    .main-nav a{color:#DDD;text-decoration:none;font-size:0.95rem;padding:0 12px}
+    .actions .btn{background:#a62dff;color:#fff;padding:7px 12px;border-radius:6px;text-decoration:none;font-weight:600;box-shadow: 0 0 4px 4px #680dc1}
+    .wrap{max-width:920px;margin:36px auto;padding:20px}
+    a{color:var(--brand)}
+    footer{margin-top:28px;color:#555;font-size:0.95rem}
+
+    .site-footer{background:#000;color:#fff;padding:14px 0;text-align:center;margin-top:40px}
+    .site-footer a{color:#fff;text-decoration:none;display:inline-flex;justify-content:center;align-items:center;gap:8px}
+    .site-footer img{display:inline-block;vertical-align:middle}
+
+    /* Responsive: portrait / small screens */
+    @media (max-width: 760px), (orientation: portrait) {
+      .site-header .container { flex-direction: column; align-items: stretch; gap: 8px; padding: 12px; }
+      .brand { justify-content: flex-start; }
+      .brand img { height: 22px; margin-right: 8px; }
+      .main-nav { display:flex; flex-wrap:wrap; gap:8px; justify-content:flex-start; align-items:center; }
+      .main-nav a { padding:6px 8px; font-size:0.95rem; }
+      .actions { align-self: stretch; display:flex; justify-content: center; }
+      .actions .btn { width:100%; max-width:240px; box-sizing:border-box; }
+      .wrap { margin: 20px 12px; padding: 12px; box-sizing: border-box; }
+      footer { text-align:center; }
+    }
+  </style>
+</head>
+<body>
+  <header class="site-header" role="banner" style="display:block !important; background: linear-gradient(135deg, #0291c6 0%, #8200de 100%) !important; border-bottom:1px solid rgba(0,0,0,0.06) !important;">
+    <div class="container" style="max-width:1160px;margin:0 auto;display:flex;align-items:center;justify-content:space-between;padding:10px 18px;">
+      <a class="brand" href="/snapaway/" style="display:flex;align-items:center;text-decoration:none;color:var(--brand);font-weight:700">
+        <img src="https://edenware.app/snapaway/favicon-32x32.png" alt="Edenware icon" style="height:28px;margin-right:10px" />
+        <img src="https://edenware.app/snapaway/files/logo.png" alt="Edenware logo" style="height:28px;" />
+      </a>
+      <nav class="main-nav" aria-label="Main navigation" style="display:flex;gap:14px;align-items:center">
+        <a href="/snapaway/en/" style="color:#DDD;text-decoration:none;font-size:0.95rem;padding:0 12px">Overview</a>
+        <a href="/snapaway/#features" style="color:#DDD;text-decoration:none;font-size:0.95rem;padding:0 12px">Features</a>
+        <a href="/snapaway/#faq" style="color:#DDD;text-decoration:none;font-size:0.95rem;padding:0 12px">FAQ</a>
+        <a href="/snapaway/tos.html" style="color:#DDD;text-decoration:none;font-size:0.95rem;padding:0 12px">Terms</a>
+        <a href="/snapaway/eula.html" style="color:#DDD;text-decoration:none;font-size:0.95rem;padding:0 12px">EULA</a>
+        <a href="/snapaway/privacy.html" style="color:#DDD;text-decoration:none;font-size:0.95rem;padding:0 12px">Privacy</a>
+      </nav>
+      <div class="actions" style="display:flex;align-items:center">
+        <a class="btn" href="https://edenware.app/snapaway/bin/snapaway_setup_sn.exe" rel="noopener" style="background:#a62dff;color:#fff;padding:7px 12px;border-radius:6px;text-decoration:none;font-weight:600;box-shadow: 0 0 4px 4px #680dc1">Download</a>
+      </div>
+    </div>
+  </header>
+
+  <div class="wrap">
+    <h1>How to Use SnapAway</h1>
+    <p><strong>Last updated:</strong> 30 March 2026</p>
+
+    <h2>Quick Start</h2>
+    <ol>
+      <li>Download and run the installer from the Download button above.</li>
+      <li>Allow any OS permissions requested (accessibility/window capture) so SnapAway can control windows.</li>
+      <li>Open SnapAway from the Start menu or the system tray.</li>
+    </ol>
+
+    <h2>Select a Process</h2>
+    <p>Use the process list in SnapAway's main window to find the application you want to hide. Type part of the app name in the search/filter field to narrow results. Click a process to select it — the selected entry is the target for hide/show actions.</p>
+
+    <h2>Hide and Restore (Keyboard or Floating Button)</h2>
+    <p>With a process selected, you can hide or restore it in two simple ways:</p>
+    <ul>
+      <li><strong>Keyboard shortcut:</strong> Open Options → Shortcuts and set a Hide and a Show shortcut. While a process is selected, press the Hide shortcut to hide the window; press the Show shortcut to restore it. Example combos: <em>Ctrl+Alt+H</em> (hide) and <em>Ctrl+Alt+S</em> (show).</li>
+      <li><strong>Floating Hide button:</strong> Click the floating Hide button that appears on-screen to hide the selected window immediately. Use the floating control or the tray menu to restore it.</li>
+    </ul>
+
+    <h2>Shortcuts — How to Set</h2>
+    <ol>
+      <li>Open SnapAway's Options or Settings.</li>
+      <li>Find the <strong>Shortcuts</strong> section and click the record field for Hide; press the key combination you want.</li>
+      <li>Repeat for Show and save changes.</li>
+    </ol>
+    <p>If a shortcut doesn't register, ensure no other app uses the same combo and that SnapAway has the required OS permissions.</p>
+
+    <h2>Set a Password (optional)</h2>
+    <p>Protect access to hidden windows with an optional password:</p>
+    <ol>
+      <li>Open SnapAway's Options → <strong>Security</strong> (or <strong>Password</strong>).</li>
+      <li>Choose <strong>Set Password</strong>, enter a strong password and confirm it.</li>
+      <li>Optionally enable <strong>Require password to restore</strong> so hidden windows require the password to be shown.</li>
+      <li>Save changes. Keep this password safe — if forgotten, contact support or use <strong>Restore Defaults</strong> (which resets other settings).</li>
+    </ol>
+
+    <h2>Troubleshooting</h2>
+    <ul>
+      <li>If shortcuts don't work, restart SnapAway and check OS permissions.</li>
+      <li>If the floating button doesn't appear, verify it's enabled in Settings and that the app is allowed to run in the background (tray).</li>
+      <li>Use <strong>Restore Defaults</strong> in Options to reset shortcuts and settings if needed.</li>
+    </ul>
+
+    <h2>Support</h2>
+    <p>Contact: <a href="mailto:contact@edenware.app">contact@edenware.app</a> — <a href="https://edenware.app">https://edenware.app</a></p>
+  </div>
+
+  <footer class="site-footer" role="contentinfo" style="display:block !important; background:#000 !important; color:#fff !important; padding:14px 0; text-align:center; margin-top:40px;">
+    <a href="#" style="display: inline-flex; justify-content: center; align-content: center; flex-wrap: wrap; height: 32px; color:#fff;">
+      Powered by <img src="/images/android-chrome-192x192.png" width="24" height="24" style="position: relative;top: 1px;margin: 0;right: -4px;" />Edenware
+    </a>
+  </footer>
+</body>
+</html>

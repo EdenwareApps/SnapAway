@@ -1,0 +1,101 @@
+appId: Edenware.app.Snapcover
+productName: SnapAway
+asar: false
+directories:
+  buildResources: ./
+  output: ./dist
+
+files:
+  - src/**/*
+  - out/**/*
+  - dist/**/*
+  - defaults.json
+  - snapaway.ico
+  - LICENSE
+  - node_modules/@fortawesome/fontawesome-free/css/all.min.css
+  - node_modules/@fortawesome/fontawesome-free/webfonts/**/*
+
+asarUnpack:
+  - dist/audio_addon.node
+  - dist/icons_addon.node
+  - dist/process_addon.node
+  - dist/windows_addon.node
+  - dist/iap_addon.node
+  - dist/icon_addon.node
+  - dist/process_addon.node
+  - dist/windows_addon.node
+  - dist/iap_addon.node
+
+win:
+  target:
+    - nsis
+  icon: snapaway.ico
+  signingHashAlgorithms:
+    - sha256
+  certificateFile: null
+  certificatePassword: null
+
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: SnapAway
+  installerIcon: setup.ico
+  uninstallerIcon: setup.ico
+  allowElevation: true
+  deleteAppDataOnUninstall: true
+  installerLanguages:
+    - en
+    - pt
+    - es
+    - fr
+    - de
+    - it
+    - ja
+    - ko
+    - nl
+    - pl
+    - ru
+    - sv
+    - th
+    - tr
+    - zh
+
+msix:
+  applicationId: SnapAway
+  identityName: Edenware.app.Snapcover
+  publisher: CN=EDENWARE, O=EDENWARE, S=Rio Grande do Sul, C=BR
+  publisherDisplayName: Edenware
+
+appx:
+  applicationId: SnapAway
+  identityName: Edenware.app.Snapcover
+  publisher: CN=EDENWARE, O=EDENWARE, S=Rio Grande do Sul, C=BR
+  publisherDisplayName: Edenware
+  languages:
+    - ar
+    - cs
+    - de
+    - el
+    - en-US
+    - es
+    - fr
+    - hi
+    - hu
+    - it
+    - ja
+    - ko
+    - nl
+    - pl
+    - pt
+    - ru
+    - sv
+    - th
+    - tr
+    - zh-CN
+
+publish:
+  provider: github
+  owner: EdenwareApps
+  repo: SnapAway

@@ -1,0 +1,17 @@
+{
+  "name": "snapaway-iap",
+  "version": "1.0.0",
+  "description": "Microsoft Store In-App Purchases bridge for SnapAway",
+  "main": "index.js",
+  "scripts": {
+    "build": "node-gyp rebuild --release",
+    "dev": "node-gyp configure --debug && node-gyp build --debug",
+    "clean": "node-gyp clean"
+  },
+  "dependencies": {
+    "node-addon-api": "^7.0.0"
+  },
+  "devDependencies": {
+    "node-gyp": "^10.0.0"
+  }
+}

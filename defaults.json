@@ -1,0 +1,12 @@
+{
+    "hideKey": "F6",
+    "showKey": "Ctrl+F6",
+    "filters": [],
+    "currentContent": "titles",
+    "startup": true,
+    "hiddenWindows": [],
+    "aboutUrl": "https://edenware.app/snapaway",
+    "updateUrl": "https://edenware.app/snapaway/update.json",
+    "revealHintShownCount": 0,
+    "revealHintDismissedForever": false
+  }

@@ -1,0 +1,2847 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <title>SnapAway</title>
+    <link rel="stylesheet" href="./assets/css/fontawesome-all.min.css">
+    <!-- app styles are imported by renderer.js -->
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+      :root {
+        --default-font-color: CanvasText;
+        --main-font-color: CanvasText;
+        --bgcolor-end: Canvas;
+        
+        /* Theme support - default to system */
+        color-scheme: light dark;
+        
+        /* Font size variables */
+        --font-size-small: 11px;
+        --font-size-medium: 12px;
+        --font-size-large: 14px;
+        --font-size-xlarge: 16px;
+        
+        /* Border radius variables - individual corners for snap-to-edges */
+        --border-radius-top-left: 9px;
+        --border-radius-top-right: 9px;
+        --border-radius-bottom-left: 9px;
+        --border-radius-bottom-right: 9px;
+
+        --entry-background-lv1: linear-gradient(to bottom, CanvasText -2000%, Canvas 250%);
+        --entry-background-lv2: linear-gradient(to bottom, CanvasText -2000%, Canvas 275%);
+        --entry-background-lv3: linear-gradient(to bottom, CanvasText -2000%, Canvas 300%);
+        --entry-background-lv4: linear-gradient(to bottom, CanvasText -2000%, Canvas 325%);
+
+        --font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      }
+      html {
+        overflow: hidden;
+        font-size: 80%;                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       
+      }
+      body {
+        margin: 0;
+        font-family: var(--font-family);
+        background: transparent;
+        height: 100vh;
+        color: CanvasText;
+        user-select: none;
+        transition: background 0.2s, border-radius 0.2s;
+      }      
+      body.theme-light {
+        --entry-background-lv1: linear-gradient(to bottom, Canvas -100%, CanvasText 1250%);
+        --entry-background-lv2: linear-gradient(to bottom, Canvas -75%, CanvasText 1250%);
+        --entry-background-lv3: linear-gradient(to bottom, Canvas -50%, CanvasText 1250%);
+        --entry-background-lv4: linear-gradient(to bottom, Canvas -25%, CanvasText 1250%);
+      }
+      
+      /* Outer container for rounded corners */
+      #outer-container {
+        width: 100%;
+        height: 100%;
+        border-top-left-radius: var(--border-radius-top-left);
+        border-top-right-radius: var(--border-radius-top-right);
+        border-bottom-left-radius: var(--border-radius-bottom-left);
+        border-bottom-right-radius: var(--border-radius-bottom-right);
+        overflow: hidden;
+        position: relative;
+        z-index: 1;
+      }
+      
+      /* Wrapper for titlebar and container */
+      .cet-wrapper {
+        display: flex;
+        flex-direction: column;
+        width: 100%;
+        height: 100%;
+        position: relative;
+        border-top-left-radius: var(--border-radius-top-left);
+        border-top-right-radius: var(--border-radius-top-right);
+        border-bottom-left-radius: var(--border-radius-bottom-left);
+        border-bottom-right-radius: var(--border-radius-bottom-right);
+        overflow: hidden;
+        box-sizing: border-box;
+        transition: border-radius 0.2s ease;
+      }
+
+      body:not(.float-mode):not(.auth-mode) .cet-wrapper {
+        border: 1px solid ButtonFace;
+      }
+
+      body:not(.float-mode) .cet-wrapper {
+        background: linear-gradient(to top, Canvas 30%, Field 150%);
+      }
+
+      body.theme-dark:not(.float-mode) .cet-wrapper {
+        border: 1px solid rgba(255,255,255,0.05);
+      }
+      
+      /* Ensure titlebar is inside outer container and has proper z-index */
+      .cet-titlebar {
+        background: transparent !important;
+        color: ButtonText !important;
+        position: relative;
+        z-index: 10;
+      }
+      
+      /* Ensure cet-container doesn't interfere with outer-container */
+      .cet-container {
+        background: transparent !important;
+        position: relative;
+        z-index: 1;
+        flex: 1;
+      }
+      
+      /* When outer-container is inside cet-container, ensure proper styling */
+      .cet-wrapper .cet-container #outer-container,
+      .cet-container #outer-container {
+        width: 100%;
+        height: 100%;
+        border-top-left-radius: var(--border-radius-top-left);
+        border-top-right-radius: var(--border-radius-top-right);
+        border-bottom-left-radius: var(--border-radius-bottom-left);
+        border-bottom-right-radius: var(--border-radius-bottom-right);
+        overflow: hidden;
+        position: relative;
+        z-index: 1;
+      }
+      
+      /* Floating mode styles - automatically applied when window is small */
+      body.float-mode {
+        background: transparent !important;
+      }
+      
+      body.float-mode #outer-container,
+      body.float-mode .cet-wrapper .cet-container #outer-container,
+      body.float-mode .cet-container #outer-container {
+        background: transparent !important;
+      }
+      
+      /* Hide main app content in floating mode */
+      body.float-mode #main-app {
+        display: none !important;
+      }
+      
+      /* Show floating button in floating mode only if enabled in config */
+      body.float-mode #floating-button {
+        display: var(--floating-button-enabled, flex) !important;
+      }
+      
+      /* Hide titlebar in floating mode */
+      body.float-mode .cet-titlebar {
+        display: none !important;
+      }
+
+      /* Slide #floating-button below viewport when in hide+float mode;
+         slides back up on mouseenter (class toggled by JS). */
+      body.hide-state.float-mode.floating-button-mode-visible:not(.window-hovered),
+      body.hide-state.float-mode.floating-button-mode-learning:not(.window-hovered) {
+        background: rgba(0, 0, 0, 0.01) !important;
+      }
+
+      body.hide-state.float-mode.floating-button-mode-visible #floating-button {
+        transform: translateY(calc(5vw + 44px));
+        pointer-events: none;
+        transition: transform 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+      }
+
+      body.hide-state.float-mode.floating-button-mode-learning #floating-button {
+        transform: translateY(var(--floating-button-adaptive-translate, 45%));
+        pointer-events: none;
+        transition: transform 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+      }
+
+      body.hide-state.float-mode.floating-button-mode-visible.window-hovered #floating-button,
+      body.hide-state.float-mode.floating-button-mode-learning.window-hovered #floating-button {
+        transform: translateY(0);
+        pointer-events: auto;
+      }
+
+      body.hide-state.float-mode.floating-button-mode-visible.window-hovered #floating-button:hover {
+        filter: none;
+        transform: scale(1.1);
+      }
+      
+      /* Hide titlebar during authentication */
+      body.auth-mode {
+        background: transparent !important;
+      }
+
+      body.auth-mode #outer-container,
+      body.auth-mode .cet-wrapper .cet-container #outer-container,
+      body.auth-mode .cet-container #outer-container {
+        background: transparent !important;
+      }
+
+      body.auth-mode .cet-titlebar {
+        display: none !important;
+      }
+
+      body.auth-mode .cet-container {
+        top: 0 !important;
+      }
+      
+      /* Main mode styles - automatically applied when window is large */
+      body.main-mode #floating-button {
+        display: none !important;
+      }
+      
+      body.main-mode #main-app {
+        display: flex !important;
+        flex-direction: column;
+      }
+      
+      body.main-mode .cet-titlebar {
+        display: flex !important;
+      }
+      
+      body.inactive.main-mode .cet-wrapper > * {
+        opacity: 0.85;
+      }
+      
+      button {
+        color: ButtonText;
+        background-color: ButtonFace;
+        border: 0px solid ButtonBorder;
+        cursor: pointer;
+        padding: 4px 8px;
+        border-radius: 4px;
+        transition: background-color 0.2s, color 0.2s;
+      }
+      button:hover {
+        background-color: Highlight;
+        color: HighlightText;
+      }
+      button:active {
+        background-color: ButtonBorder;
+      }
+      input, textarea {
+        user-select: text;
+      }
+      h2 {
+        font-size: 1.25rem;
+      }
+
+      .cet-window-icon {
+        opacity: 0.675;
+      }
+
+      .cet-window-title {
+        font-size: 1rem !important;
+        letter-spacing: 0.4px;
+        font-weight: 500;
+        text-shadow: inherit;
+        margin-left: 4px !important;
+        cursor: default;
+        user-select: none;
+        opacity: 0.675;
+      }
+      
+      .cet-window-title:hover {
+        cursor: default;
+      }
+
+      /* Custom Electron Titlebar Styles */
+      .cet-container {
+        display: flex;
+        flex-direction: column;
+        height: 100vh;
+        width: 100vw;
+      }
+
+      .cet-titlebar {
+        display: flex;
+        align-items: center;
+        height: 30px;
+        color: ButtonText;
+        font-size: 12px;
+        user-select: none;
+        -webkit-app-region: drag;
+        position: relative;
+        z-index: 1000;
+      }
+
+      .cet-drag-region {
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        -webkit-app-region: drag;
+        pointer-events: none;
+      }
+      
+
+      /* Force button update */
+      .cet-max-restore.force-update {
+        animation: none;
+        transform: translateZ(0);
+      }
+
+      /* Ensure maximize button has correct styling */
+      .cet-icon, .cet-max-restore {
+        width: 46px;
+        height: 30px;
+        margin: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        pointer-events: auto;
+        position: relative;
+        z-index: 1;
+        color: ButtonText;
+        cursor: pointer;
+        font-family: var(--font-family);
+        border-bottom-left-radius: 4px;
+        border-bottom-right-radius: 4px;
+      }
+
+      .cet-icon span, .cet-max-restore span {
+        position: relative;
+        top: -1px;
+        padding-left: 0.33em;
+      }
+
+      .cet-window-close {
+        border-bottom-right-radius: 0;
+      }
+      
+      .cet-icon:hover, .cet-max-restore:hover {
+        background-color: Highlight !important;
+        color: HighlightText !important;
+      }
+      
+      /* Also fix cet-icon svg (for options icon) */
+      .cet-icon svg,
+      .cet-titlebar .cet-controls-container .cet-icon svg,
+      .cet-max-restore svg {
+        fill: ButtonText !important;
+      }
+
+      .cet-title {
+        flex: 1;
+        text-align: center;
+        font-weight: 500;
+        color: ButtonText;
+        pointer-events: auto;
+        position: relative;
+        z-index: 1;
+      }
+
+      .cet-window-controls {
+        display: flex;
+        align-items: center;
+        height: 100%;
+        -webkit-app-region: no-drag;
+        pointer-events: auto;
+        position: relative;
+        z-index: 1;
+      }
+
+      .cet-control-icon {
+        width: 46px;
+        height: 30px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        cursor: pointer;
+        transition: background-color 0.2s, color 0.2s;
+        color: ButtonText;
+        background-color: transparent;
+      }
+
+      .cet-control-icon:hover {
+        background-color: Highlight;
+        color: HighlightText;
+      }
+      
+      /* Force SVG fill color for control icons - override library styles */
+      .cet-control-icon svg {
+        fill: ButtonText !important;
+      }
+      
+      /* Ensure title is visible in light theme */
+      [data-theme="light"] .cet-title,
+      [data-theme="light"] .cet-window-title {
+        color: ButtonText;
+      }
+      
+      /* Ensure icons are visible in light theme */
+      [data-theme="light"] .cet-icon {
+        color: ButtonText;
+      }
+      
+      /* Ensure icons are visible in light theme */
+      [data-theme="light"] .cet-icon:hover svg, [data-theme="light"] .cet-max-restore:hover svg {
+        fill: #eeeeee !important;
+      }
+      
+      /* Ensure icons are visible in light theme */
+      [data-theme="light"] .cet-control-icon {
+        color: ButtonText;
+      }
+      
+      .cet-max-restore svg {
+        width: 10px !important;
+        height: 10px !important;
+      }
+
+      .cet-control-icon.inactive {
+        opacity: 0.5;
+        cursor: default;
+      }
+
+      .cet-control-icon.inactive:hover {
+        background-color: transparent;
+      }
+
+      .cet-control-icon svg {
+        width: 10px;
+        height: 10px;
+        fill: ButtonText !important;
+      }
+
+      .cet-control-close:hover {
+        background-color: Highlight !important;
+        color: HighlightText;
+      }
+
+
+      
+      /* Aplicar estilos à barra de rolagem em navegadores compatíveis */
+      ::-webkit-scrollbar {
+        scrollbar-width: 12px;
+        scrollbar-color: ButtonFace transparent;
+        width: 12px;
+        height: 12px;
+      }
+
+      ::-webkit-scrollbar-thumb {
+        background-color: ButtonFace;
+        border-radius: 4px;
+        border-top-right-radius: 0;
+        border-bottom-right-radius: 0;
+      }
+
+      ::-webkit-scrollbar-track {
+        background-color: transparent;
+      }
+
+      /* Floating Button Styles */
+      #floating-button {
+        position: fixed;
+        bottom: 0;
+        right: 0;
+        width: 90vw;
+        height: 90vh;
+        min-width: 32px;
+        min-height: 32px;
+        max-height: 35px;
+        max-width: 35px;
+        margin: 5vw;
+        border: none;
+        background: url('assets/images/default-icon.png') no-repeat center/contain;
+        cursor: pointer;
+        transition: width 0.2s, height 0.2s, transform 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+        pointer-events: auto;
+        z-index: 1000;
+      }
+
+      #floating-button button {
+        width: 100%;
+        height: 100%;
+        border: none;
+        background: transparent;
+        cursor: pointer;
+      }
+
+      #floating-button:hover {
+        transform: scale(1.1);
+      }
+
+      /* Font size classes */
+      body.font-size-small {
+        font-size: var(--font-size-small);
+      }
+      
+      body.font-size-medium {
+        font-size: var(--font-size-medium);
+      }
+      
+      body.font-size-large {
+        font-size: var(--font-size-large);
+      }
+      
+      body.font-size-xlarge {
+        font-size: var(--font-size-xlarge);
+      }
+
+      #floating-button:active {
+        transform: scale(0.9);
+      }
+
+      /* Opacidade reduzida quando o app está no estado 'hide' */
+      #floating-button.hidden-state {
+        background: url('assets/images/locked.png') no-repeat center/contain;
+      }
+
+      #reveal-hotspot-hint {
+        position: fixed;
+        bottom: 12px;
+        right: 12px;
+        width: 18px;
+        height: 18px;
+        border-radius: 50%;
+        pointer-events: none;
+        opacity: 0;
+        z-index: 1001;
+        transition: opacity 0.25s ease;
+        box-shadow: 0 0 0 0 rgba(255, 255, 255, 0.55);
+      }
+
+      body.hide-state.reveal-hint-active #reveal-hotspot-hint {
+        opacity: 0.8;
+        animation: revealHotspotPulse 2s ease-out forwards;
+      }
+
+      @keyframes revealHotspotPulse {
+        0% {
+          opacity: 0;
+          transform: scale(0.9);
+          box-shadow: 0 0 0 0 rgba(255, 255, 255, 0.6);
+        }
+        20% {
+          opacity: 0.6;
+          transform: scale(1.05);
+          box-shadow: 0 0 0 10px rgba(255, 255, 255, 0.12);
+        }
+        100% {
+          opacity: 0;
+          transform: scale(1.1);
+          box-shadow: 0 0 0 18px rgba(255, 255, 255, 0);
+        }
+      }
+
+
+
+
+
+      @keyframes pulse {
+        0% {
+          transform: scale(1);
+        }
+        50% {
+          transform: scale(1.1);
+        }
+        100% {
+          transform: scale(1);
+        }
+      }
+      
+      @keyframes pulse-red {
+        0% {
+          transform: scale(1);
+          box-shadow: 0 0 0 0 rgba(255, 0, 0, 0.4);
+        }
+        50% {
+          transform: scale(1.1);
+          box-shadow: 0 0 0 4px rgba(255, 0, 0, 0.2);
+        }
+        100% {
+          transform: scale(1);
+          box-shadow: 0 0 0 0 rgba(255, 0, 0, 0.4);
+        }
+      }
+
+      /* State-based CSS organization */
+      
+      /* Show state styles */
+      body.show-state #protect-notification-badge {
+        display: none; /* Hide badge in show state */
+      }
+      
+
+      
+      /* Hide state styles */
+      body.hide-state #protect-notification-badge {
+        position: absolute;
+        top: -5px;
+        right: -5px;
+        background: Highlight;
+        color: HighlightText;
+        border-radius: 50%;
+        min-width: 14px;
+        height: 14px;
+        font-size: 10px;
+        font-weight: bold;
+        display: none; /* Hidden by default, shown only when count > 0 */
+        align-items: center;
+        justify-content: center;
+        z-index: 1002;
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+        animation: pulse 2s infinite;
+      }
+      
+      /* Show notification badge when count > 0 in hide state */
+      body.hide-state #protect-notification-badge.show {
+        display: flex !important;
+      }
+      
+
+
+      /* Keypad Styles */
+      .keypad-container {
+        width: 100vw;
+        height: 100vh;
+        min-width: 160px;
+        min-height: 200px;
+        border-radius: 5vmin;
+        display: none;
+        flex-direction: column;
+        justify-content: space-between;
+        box-sizing: border-box;
+        background: Canvas;
+        border: 1px solid ButtonBorder;
+        padding: 4vmin 1vmin 6.5vmin 1vmin;
+        pointer-events: auto;
+        z-index: 1000;
+      }
+
+      .password-display {
+        text-align: center;
+        margin-bottom: 2vmin;
+        flex-grow: 1;
+        height: 10vmin;
+        min-height: 10vmin;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+      }
+
+      #password {
+        font-size: 10vmin;
+        letter-spacing: 1vmin;
+        display: inline-block;
+        min-width: 20vmin;
+        text-align: center;
+      }
+
+      .keypad {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 3vmin;
+        flex-grow: 1;
+        padding: 3vmin;
+      }
+
+      .key {
+        padding: 0;
+        font-size: 10vmin;
+        border-width: 0;
+        border-radius: 2vmin;
+        background-color: ButtonFace;
+        cursor: pointer;
+        color: ButtonText;
+        transition: background-color 0.2s;
+        box-shadow: 0 0 1px ButtonBorder;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+      }
+
+      .key:hover {
+        background-color: Highlight;
+        color: HighlightText;
+      }
+
+      body.auth-mode-failure .key {
+        opacity: 0.25;
+      }
+
+      .clear {
+        grid-column: 2 / 3;
+      }
+
+      .cancel {
+        grid-column: 3 / 4;
+        color: Highlight !important;
+      }
+
+      .cancel:hover {
+        background-color: Highlight !important;
+        color: HighlightText !important;
+      }
+
+      .error-text {
+        color: Highlight;
+      }
+      
+      /* Fix protect-key button contrast */
+      #protect-key {
+        background: ButtonFace url(/assets/images/default-icon.png) no-repeat;
+        background-size: contain;
+        background-position-x: 6px;
+        padding-left: 35px !important;
+        color: ButtonText !important;
+        box-shadow: 0 0 1px ButtonBorder;
+      }
+      
+      #protect-key:hover {
+        background-color: Highlight !important;
+        color: HighlightText !important;        
+        transform: translateY(-1px);
+      }
+      
+      /* Fix filter-selector contrast */
+      #filter-selector,
+      #filter-selector select {
+        background-color: ButtonFace !important;
+        color: ButtonText !important;
+      }
+      
+      /* Fix font-case-button and view-filter input */
+      #font-case-button,
+      .view-filter input {
+        background: transparent !important;
+        color: ButtonText !important;
+      }
+      
+      .view-filter.focused #font-case-button,
+      .view-filter.focused input {
+        color: ButtonText !important;
+      }
+            
+      #font-case-button i {   
+        opacity: 1;
+      }
+      
+      #font-case-button.sensitive i {   
+        opacity: 0.5 !important;
+      }
+
+      .add-filter-plus {
+        overflow: visible;
+      }
+      .add-filter-plus i {
+        overflow: visible;
+        font-size: 1rem;
+        transform: scale(1);
+        transition: transform 0.25s ease;
+      }
+      .add-filter-plus:hover i {
+        transform: scale(1.15);
+      }
+      .kill-button {
+        display: none;
+      }
+      div:hover > .kill-button {
+        display: inline-flex;
+      }      
+      
+      .shake {
+        animation: shake-anim 0.5s cubic-bezier(.36,.07,.19,.97);
+        transform: translateX(0);
+      }
+
+      @keyframes shake-anim {
+        10%, 90% { transform: translateX(-2px); }
+        20%, 80% { transform: translateX(4px); }
+        30%, 50%, 70% { transform: translateX(-6px); }
+        40%, 60% { transform: translateX(6px); }
+      }
+
+    </style>
+  </head>
+  <body>
+    <!-- Floating Button (inicialmente oculto) -->
+    <div id="floating-button" style="display: none;">
+      <button 
+        onclick="notifyMainClick()" 
+        ondblclick="notifyMainDoubleClick()" 
+        oncontextmenu="notifyMainRightClick(); return false;" 
+        title="SnapAway"
+      ></button>
+    </div>
+    <div id="reveal-hotspot-hint" aria-hidden="true"></div>
+
+    <!-- Keypad Container (inicialmente oculto) -->
+    <div class="keypad-container" style="display: none;" tabindex="0">
+      <div class="password-display">
+        <span id="password"></span>
+      </div>
+      <div class="keypad">
+        <button class="key" data-value="1">1</button>
+        <button class="key" data-value="2">2</button>
+        <button class="key" data-value="3">3</button>
+        <button class="key" data-value="4">4</button>
+        <button class="key" data-value="5">5</button>
+        <button class="key" data-value="6">6</button>
+        <button class="key" data-value="7">7</button>
+        <button class="key" data-value="8">8</button>
+        <button class="key" data-value="9">9</button>
+        <button class="key" data-value="0">0</button>
+        <button class="key clear" id="clear"><i class="fas fa-backspace"></i></button>
+        <button class="key cancel" id="cancel"><i class="fas fa-times"></i></button>
+      </div>
+    </div>
+
+    <!-- Outer Container for rounded corners -->
+    <div id="outer-container">
+      <!-- Main App (inicialmente visível) -->
+      <div id="main-app">
+        <div id="app"></div>
+      </div>
+    </div>
+    
+    <!-- Custom Electron Titlebar is initialized in preload.js -->
+    <!-- renderer entrypoint loaded by Vite -->
+    <script type="module" src="./renderer.js"></script>
+    <script>
+      console.log('[RENDERER] Script tag started executing...');
+
+      window.addEventListener('focus', (e) => {
+        document.body.classList.remove('inactive');
+      });
+      window.addEventListener('blur', (e) => {
+        document.body.classList.add('inactive');
+      });
+
+      // Floating button functionality
+      const passwordDisplay = document.getElementById('password');
+      const keys = document.querySelectorAll('.key:not(.clear):not(.cancel)');
+      const clearButton = document.getElementById('clear');
+      const cancelButton = document.getElementById('cancel');
+      let password = '';
+      let errorCount = 0;
+      let isSettingPassword = false;
+      let isAuthCheck = false;
+      let isFirstPasswordInput = true; // Flag para controlar se é a primeira ou segunda digitação
+      let firstPassword = ''; // Armazena a primeira senha digitada
+      let authErrorTimeout = null; // Timeout para voltar ao float-mode após erro // Flag to distinguish between setting and validating password
+
+      // Global variable to store the maximize button
+      let globalMaximizeBtn = null;
+
+      console.log('[RENDERER] Variables initialized, about to define functions...');
+
+      // Function to initialize maximize button functionality
+      function initializeMaximizeButton() {
+        console.log('[RENDERER] Initializing maximize button functionality');
+
+        // Wait for titlebar to be created and add wrapper
+        setTimeout(() => {
+          const titlebar = document.querySelector('.cet-titlebar');
+          const container = document.querySelector('.cet-container');
+          const maximizeBtn = document.querySelector('.cet-max-restore');
+
+          // Store globally
+          globalMaximizeBtn = maximizeBtn;
+          const allTitlebarButtons = document.querySelectorAll('.cet-titlebar button, .cet-titlebar div[title]');
+          console.log('[RENDERER] Titlebar found:', !!titlebar);
+          console.log('[RENDERER] Container found:', !!container);
+          console.log('[RENDERER] Maximize button elements found:', !!maximizeBtn);
+          console.log('[RENDERER] All titlebar buttons found:', allTitlebarButtons.length);
+          console.log('[RENDERER] Body classes:', document.body.className);
+
+          if (titlebar) {
+            console.log('[RENDERER] Titlebar display:', window.getComputedStyle(titlebar).display);
+          }
+
+          if (maximizeBtn) {
+            console.log('[RENDERER] Maximize button display:', window.getComputedStyle(maximizeBtn).display);
+          }
+
+          // Log all buttons in titlebar
+          allTitlebarButtons.forEach((btn, index) => {
+            console.log(`[RENDERER] Button ${index}:`, btn.className, btn.title || btn.getAttribute('title'), 'display:', window.getComputedStyle(btn).display);
+          });
+
+          if (maximizeBtn && window.api && window.api.toggleMaximize && window.api.onWindowMaximizedChanged) {
+            console.log('[RENDERER] Setting up maximize button listener');
+
+            // Override maximize button behavior
+            maximizeBtn.addEventListener('click', (e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              console.log('[RENDERER] Maximize button clicked');
+              window.api.toggleMaximize().catch(err => console.error('Toggle maximize error:', err));
+            });
+
+            // Store current maximize state
+            let currentMaximizeState = false;
+
+            // Function to replace the maximize button completely
+            const replaceMaximizeButton = (isMaximized) => {
+              console.log('[RENDERER] replaceMaximizeButton called with:', isMaximized);
+
+              if (!globalMaximizeBtn) {
+                console.log('[RENDERER] globalMaximizeBtn is null, finding it...');
+                globalMaximizeBtn = document.querySelector('.cet-max-restore');
+                console.log('[RENDERER] Found globalMaximizeBtn:', !!globalMaximizeBtn);
+              }
+
+              if (!globalMaximizeBtn) {
+                console.warn('[RENDERER] Cannot replace maximize button - element not found');
+                return;
+              }
+
+              console.log('[RENDERER] Replacing button, current globalMaximizeBtn:', globalMaximizeBtn);
+
+              const svgContent = isMaximized ?
+                '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 11 11"><path d="M7.9,2.2h-7C0.4,2.2,0,2.6,0,3.1v7C0,10.6,0.4,11,0.9,11h7c0.5,0,0.9-0.4,0.9-0.9v-7C8.8,2.6,8.4,2.2,7.9,2.2z M7.7,9.6 c0,0.2-0.1,0.3-0.3,0.3h-6c-0.2,0-0.3-0.1-0.3-0.3v-6c0-0.2,0.1-0.3,0.3-0.3h6c0.2,0,0.3,0.1,0.3,0.3V9.6z"/><path d="M10,0H3.5v1.1h6.1c0.2,0,0.3,0.1,0.3,0.3v6.1H11V1C11,0.4,10.6,0,10,0z"/></svg>' : // restore icon
+                '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 11 11"><path d="M0,1.7v7.6C0,10.2,0.8,11,1.7,11h7.6c0.9,0,1.7-0.8,1.7-1.7V1.7C11,0.8,10.2,0,9.3,0H1.7C0.8,0,0,0.8,0,1.7z M8.8,9.9H2.2c-0.6,0-1.1-0.5-1.1-1.1V2.2c0-0.6,0.5-1.1,1.1-1.1h6.7c0.6,0,1.1,0.5,1.1,1.1v6.7C9.9,9.4,9.4,9.9,8.8,9.9z"/></svg>'; // maximize icon
+
+              console.log('[RENDERER] SVG content length:', svgContent.length);
+
+              // Remove the old button
+              const parent = globalMaximizeBtn.parentNode;
+              const nextSibling = globalMaximizeBtn.nextSibling;
+              console.log('[RENDERER] Removing old button, parent:', !!parent);
+              parent.removeChild(globalMaximizeBtn);
+
+              // Create new button with correct icon
+              const newBtn = document.createElement('div');
+              newBtn.className = 'cet-max-restore';
+              newBtn.innerHTML = svgContent;
+              newBtn.style.cssText = globalMaximizeBtn.style.cssText; // Copy styles
+              newBtn.style.width = '46px'; // Ensure proper width
+              newBtn.style.height = '28px'; // Ensure proper height
+              newBtn.style.display = 'flex';
+              newBtn.style.alignItems = 'center';
+              newBtn.style.justifyContent = 'center';
+
+              // Add click listener
+              newBtn.addEventListener('click', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                console.log('[RENDERER] Maximize button clicked');
+                window.api.toggleMaximize().catch(err => console.error('Toggle maximize error:', err));
+              });
+
+              // Insert the new button
+              if (nextSibling) {
+                parent.insertBefore(newBtn, nextSibling);
+              } else {
+                parent.appendChild(newBtn);
+              }
+
+              // Update reference
+              globalMaximizeBtn = newBtn;
+
+              console.log('[RENDERER] Button replaced with state:', isMaximized);
+            };
+
+            // Listen for maximize state changes
+            window.api.onWindowMaximizedChanged((event, isMaximized) => {
+              console.log('[RENDERER] Maximize state changed to:', isMaximized);
+              console.log('[RENDERER] Button will show:', isMaximized ? 'RESTORE icon' : 'MAXIMIZE icon');
+
+              currentMaximizeState = isMaximized;
+              replaceMaximizeButton(isMaximized);
+            });
+
+            // Set initial maximize state
+            window.api.getCurrentState().then(state => {
+              if (state && typeof state.maximized === 'boolean') {
+                console.log('[RENDERER] Setting initial maximize state:', state.maximized);
+                currentMaximizeState = state.maximized;
+                console.log('[RENDERER] Calling replaceMaximizeButton with:', state.maximized);
+                replaceMaximizeButton(state.maximized);
+              } else {
+                console.warn('[RENDERER] Invalid initial maximize state:', state);
+              }
+            }).catch(err => console.warn('[RENDERER] Failed to get initial maximize state:', err));
+          } else {
+            console.warn('[RENDERER] Cannot initialize maximize button - missing elements or APIs');
+          }
+        }, 500);
+      }
+
+      function updateDisplay(text) {
+        console.log('updateDisplay', text);
+        if (typeof text === 'string') {
+          passwordDisplay.innerHTML = text;
+        } else if (password.length > 0) {
+          passwordDisplay.innerHTML = '<b>' + ('<i class="fas fa-asterisk" aria-hidden="true"></i>'.repeat(password.length)) + ('<i class="fas fa-circle" aria-hidden="true" style="opacity: 0.25;transform: scale(0.5);"></i>'.repeat(4 - password.length)) + '</b>';
+        } else {
+          // Exibir textos específicos durante a criação/verificação de senha
+          if (isSettingPassword) {
+            if (isFirstPasswordInput) {
+              passwordDisplay.innerHTML = window.lang?.CREATE_PASSWORD || 'Create password';
+            } else {
+              passwordDisplay.innerHTML = window.lang?.TYPE_PASSWORD_AGAIN || 'Type password again';
+            }
+          } else if (isAuthCheck || document.body.classList.contains('auth-mode')) {
+            passwordDisplay.innerHTML = errorCount > 0 ? '<span class="error-text">' + (window.lang?.FAILED_ATTEMPTS?.replace('{0}', errorCount) || `Failed attempts: ${errorCount}`) + '</span>' : (window.lang?.ENTER_PASSWORD || 'Enter password');
+          } else {
+            passwordDisplay.innerHTML = errorCount > 0 ? '<span class="error-text">' + (window.lang?.FAILED_ATTEMPTS?.replace('{0}', errorCount) || `Failed attempts: ${errorCount}`) + '</span>' : ' ';
+          }
+        }
+      }
+
+      async function validatePassword() {
+        console.log('validatePassword', password);
+        const hash = await window.api.hashPin(password)
+        console.log('[RENDERER] Hash digitado:', hash, 'Senha salva:', window.config?.password);
+        if (window.config?.password && hash === window.config?.password) {
+          // Clear any existing timeout on success
+          if (authErrorTimeout) {
+            clearTimeout(authErrorTimeout);
+            authErrorTimeout = null;
+          }
+
+          if (isAuthCheck) {
+            console.log('[RENDERER] Auth check passed (restore-config).');
+            isAuthCheck = false;
+            window.api.send('auth-check-response', true);
+
+            // informa main process que auth foi bem-sucedida para restaurar show-state (quando apropriado)
+            window.api.send('auth-result-response', true);
+
+            // Return to normal mode after check without triggering show/hide
+            document.querySelector('.keypad-container').style.display = 'none';
+            document.body.classList.remove('auth-mode');
+            updateFloatingButtonDisplay();
+            setTimeout(updateWindowMode, 100);
+
+            // Se ainda estiver em hide-state, o fluxo auth-result no main tratará a transição
+            // Aqui não forçamos float-mode para evitar que fique preso em hide + float.
+
+          } else {
+            window.dispatchEvent(new Event('auth-success'));
+            // Reset error count ONLY on successful authentication
+            errorCount = 0;
+            // Update notification badge to reflect the reset error count
+            updateNotificationBadge(0);
+          }
+        } else {
+          window.dispatchEvent(new Event('auth-error'))
+          errorCount++;
+          // Update notification badge to show failed attempts
+          updateNotificationBadge(0);
+          
+          // If 3 failed attempts, cancel authentication immediately
+          if (errorCount >= 3) {
+            console.log('[RENDERER] 3 failed attempts, canceling authentication');
+            if (authErrorTimeout) {
+              clearTimeout(authErrorTimeout);
+              authErrorTimeout = null;
+            }
+            if (isAuthCheck) {
+              window.api.send('auth-check-response', false);
+              isAuthCheck = false;
+            }
+            window.api.send('auth-canceled');
+            // Don't reset error count here - let it persist until correct password
+          } else {
+            // Set timeout to return to float-mode after 3 seconds if no more input
+            if (authErrorTimeout) {
+              clearTimeout(authErrorTimeout);
+            }
+            authErrorTimeout = setTimeout(() => {
+              console.log('[RENDERER] Auth error timeout - returning to float mode');
+              window.api.send('auth-canceled');
+              // Don't reset error count on timeout - let it persist
+              authErrorTimeout = null;
+            }, 3000);
+          }
+        }
+        password = '';
+        updateDisplay();
+      }
+      
+      // Function to handle password input for setting new password
+      function handlePasswordInput() {
+        console.log('handlePasswordInput', password);
+        if (password.length === 4) {
+          if (isFirstPasswordInput) {
+            // Primeira digitação - armazenar e pedir confirmação
+            firstPassword = password;
+            password = '';
+            isFirstPasswordInput = false;
+            updateDisplay();
+          } else {
+            // Segunda digitação - verificar se coincide
+            if (password === firstPassword) {
+              // Senhas coincidem - enviar para o processo principal
+              window.api.send('auth-input-response', password);
+              password = '';
+              firstPassword = '';
+              isFirstPasswordInput = true;
+              updateDisplay();
+            } else {
+              // Senhas não coincidem - voltar ao início
+              console.log('[RENDERER] Passwords do not match, starting over');
+              password = '';
+              firstPassword = '';
+              isFirstPasswordInput = true;
+              updateDisplay();
+            }
+          }
+        }
+      }
+
+      function notifyMainClick() {
+        console.log('notifyMainClick - single click');
+        window.api.send('floating-button-clicked');
+      }
+      
+      function notifyMainDoubleClick() {
+        console.log('notifyMainDoubleClick - double click');
+        window.api.send('floating-button-restore');
+      }
+      
+      function notifyMainRightClick() {
+        console.log('notifyMainRightClick - right click');
+        window.api.send('floating-button-right-click');
+      }
+
+      // Hover-to-restore: quando estivermos em show-state, manter o mouse sobre
+      // #floating-button por 80% da duração do scan-line solicita restauração para main-mode.
+      (function() {
+        const floatingButton = document.getElementById('floating-button');
+        const floatingButtonButton = floatingButton ? floatingButton.querySelector('button') : null;
+        const SCAN_DURATION = 3000; // ms - deve corresponder à animação scanLine
+        const SCAN_TRIGGER_RATIO = 0.6; // executa restore aos 80%
+        let hoverRestoreTimer = null;
+        let hoverRestoreTriggered = false;
+
+        function isInShowState() {
+          return document.body.classList.contains('show-state');
+        }
+
+        function requestRestore() {
+          if (!isInShowState() || hoverRestoreTriggered) return;
+          hoverRestoreTriggered = true;
+          if (hoverRestoreTimer) {
+            clearTimeout(hoverRestoreTimer);
+            hoverRestoreTimer = null;
+          }
+          console.log('[RENDERER] scanLine 80% reached; solicitando restore para main-mode');
+          window.api.send('floating-button-restore');
+        }
+
+        function startHoverRestoreTimer() {
+          if (!isInShowState()) return;
+          if (hoverRestoreTriggered) return;
+
+          if (document.body.classList.contains('floating-button-wait-mouseenter')) {
+            // ignore first hover after show-state activation
+            document.body.classList.remove('floating-button-wait-mouseenter');
+            return;
+          }
+
+          if (!hoverRestoreTimer) {
+            hoverRestoreTimer = setTimeout(requestRestore, SCAN_DURATION * SCAN_TRIGGER_RATIO);
+          }
+        }
+
+        function cancelHoverRestoreTimer() {
+          if (hoverRestoreTimer) {
+            clearTimeout(hoverRestoreTimer);
+            hoverRestoreTimer = null;
+          }
+          hoverRestoreTriggered = false;
+        }
+
+        if (floatingButton) {
+          floatingButton.addEventListener('mouseenter', startHoverRestoreTimer);
+          floatingButton.addEventListener('mouseleave', cancelHoverRestoreTimer);
+          floatingButton.addEventListener('mousedown', cancelHoverRestoreTimer);
+          floatingButton.addEventListener('click', cancelHoverRestoreTimer);
+
+          if (floatingButtonButton) {
+            floatingButtonButton.addEventListener('animationend', (evt) => {
+              if (evt.animationName !== 'scanLine') return;
+              if (!isInShowState()) return;
+              if (!floatingButton.matches(':hover')) return;
+              requestRestore();
+            });
+          }
+        } else {
+          console.warn('[RENDERER] Element #floating-button não encontrado ao registrar hover-restore');
+        }
+      })();
+
+      // Slide #floating-button: slideDown on mouseleave from window, slideUp on mouseenter.
+      // Only visible via CSS when body has .window-hovered in hide-state + float-mode.
+      (function () {
+        const isFloatingVisible = () => document.body.classList.contains('floating-button-mode-visible') || document.body.classList.contains('floating-button-mode-learning');
+
+        document.documentElement.addEventListener('mouseenter', function () {
+          if (!isFloatingVisible()) return;
+          document.body.classList.add('window-hovered');
+        });
+
+        document.documentElement.addEventListener('mouseleave', function (event) {
+          // Avoid false leave when moving into sub-elements inside the document.
+          const related = event.relatedTarget;
+          if (related && document.documentElement.contains(related)) {
+            return;
+          }
+          document.body.classList.remove('window-hovered');
+        });
+      })();
+
+
+      // Notification badge functions
+      function updateNotificationBadge(count) {
+        const protectBadge = document.getElementById('protect-notification-badge');
+        const protectCountElement = document.getElementById('protect-count');
+        const isHideState = document.body.classList.contains('hide-state');
+
+        if (protectBadge && protectCountElement) {
+          if (count > 0 && isHideState) {
+            protectCountElement.textContent = count > 99 ? '99+' : count.toString();
+            protectBadge.classList.add('show');
+          } else {
+            protectBadge.classList.remove('show');
+          }
+        }
+      }
+
+      function showNotificationBadge(count) {
+        updateNotificationBadge(count);
+      }
+
+      function hideNotificationBadge() {
+        updateNotificationBadge(0);
+      }
+
+      // Event listeners for floating button
+      keys.forEach(key => {
+        key.addEventListener('click', function () {
+          console.log('key.addEventListener', password);
+          // Cancel timeout when user starts typing again
+          if (authErrorTimeout) {
+            clearTimeout(authErrorTimeout);
+            authErrorTimeout = null;
+            console.log('[RENDERER] Auth error timeout canceled - user is typing again');
+          }
+          
+          if (password.length < 4) {
+            password += this.getAttribute('data-value');
+            updateDisplay();
+            if (password.length === 4) {
+              console.log('[RENDERER] Password context - isSettingPassword:', isSettingPassword);
+              
+              if (isSettingPassword) {
+                handlePasswordInput();
+              } else {
+                validatePassword();
+              }
+            }
+          }
+        });
+      });
+
+      clearButton.addEventListener('click', function () {
+        // Cancel timeout when user clears the input
+        if (authErrorTimeout) {
+          clearTimeout(authErrorTimeout);
+          authErrorTimeout = null;
+          console.log('[RENDERER] Auth error timeout canceled - user cleared input');
+        }
+        password = '';
+        // Se estiver criando senha, resetar o estado
+        if (isSettingPassword) {
+          firstPassword = '';
+          isFirstPasswordInput = true;
+        }
+        updateDisplay();
+      });
+
+      cancelButton.addEventListener('click', function () {
+        console.log('[RENDERER] Cancel button clicked');
+
+        if (isAuthCheck) {
+          window.api.send('auth-check-response', false);
+          isAuthCheck = false;
+        }
+
+        // Se estiver criando senha, limpar a senha das configurações
+        if (isSettingPassword) {
+          console.log('[RENDERER] Clearing password from config');
+          window.api.send('clear-password');
+        }
+
+        window.api.send('auth-canceled');
+      });
+
+      // Add keyboard support for numeric input
+      document.addEventListener('keydown', function(event) {
+        // Only handle keyboard events when in auth mode
+        if (!document.body.classList.contains('auth-mode')) {
+          return;
+        }
+        
+        console.log('[RENDERER] Key pressed:', event.key, 'KeyCode:', event.keyCode);
+        
+        // Cancel timeout when user starts typing again
+        if (authErrorTimeout) {
+          clearTimeout(authErrorTimeout);
+          authErrorTimeout = null;
+          console.log('[RENDERER] Auth error timeout canceled - user is typing again');
+        }
+        
+        // Handle numeric keys (0-9)
+        if (event.key >= '0' && event.key <= '9') {
+          event.preventDefault();
+          if (password.length < 4) {
+            password += event.key;
+            updateDisplay();
+            console.log('[RENDERER] Added digit via keyboard:', event.key, 'Password length:', password.length);
+            if (password.length === 4) {
+              console.log('[RENDERER] Password context - isSettingPassword:', isSettingPassword);
+              
+              if (isSettingPassword) {
+                handlePasswordInput();
+              } else {
+                validatePassword();
+              }
+            }
+          }
+        }
+        // Handle Enter key to submit
+        else if (event.key === 'Enter') {
+          event.preventDefault();
+          if (password.length === 4) {
+            console.log('[RENDERER] Enter pressed - submitting password');
+            if (isSettingPassword) {
+              handlePasswordInput();
+            } else {
+              validatePassword();
+            }
+          }
+        }
+        // Handle Backspace key to clear last digit
+        else if (event.key === 'Backspace') {
+          event.preventDefault();
+          if (password.length > 0) {
+            password = password.slice(0, -1);
+            updateDisplay();
+            console.log('[RENDERER] Backspace pressed - removed last digit, password length:', password.length);
+          }
+        }
+        // Handle Escape key to cancel
+        else if (event.key === 'Escape') {
+          event.preventDefault();
+          console.log('[RENDERER] Escape pressed - canceling auth');
+          if (isSettingPassword) {
+            console.log('[RENDERER] Clearing password from config');
+            window.api.send('clear-password');
+          }
+          window.api.send('auth-canceled');
+        }
+      });
+
+      let previousHideState = null;
+
+      // Listen for state changes
+      window.api.onStateChange((_, state) => {
+        console.log('State changed to:', state);
+
+        if (previousHideState === null) {
+          previousHideState = state;
+        }
+
+        // Ao entrar em show-state a partir do hide-state, bloqueia scan line até um novo mouseenter
+        if (state === 'show') {
+          document.body.classList.add('floating-button-wait-mouseenter');
+        } else {
+          document.body.classList.remove('floating-button-wait-mouseenter');
+        }
+
+        // Update learning hide counter on transition to hide state
+        if (state === 'hide' && previousHideState !== 'hide' && getFloatingButtonMode() === 'learning') {
+          const currentCount = Number(window.config?.adaptiveFloatingHideCount || 0);
+          const nextCount = Math.min(5, currentCount + 1);
+          console.log('[RENDERER] Learning hide counter incremented:', currentCount, '->', nextCount);
+          window.api.updateConfig({ adaptiveFloatingHideCount: nextCount });
+        }
+
+        previousHideState = state;
+
+        // Update body classes for state-based CSS
+        if (state === 'hide') {
+          document.body.classList.remove('show-state');
+          document.body.classList.add('hide-state');
+        } else {
+          document.body.classList.remove('hide-state');
+          document.body.classList.add('show-state');
+        }
+
+        // Update floating button state
+        const floatingButton = document.getElementById('floating-button');
+        if (state === 'hide') {
+          floatingButton.classList.add('hidden-state');
+        } else {
+          floatingButton.classList.remove('hidden-state');
+        }
+
+        // Update floating button display and visibility based on current mode and state
+        updateFloatingButtonDisplay();
+        updateFloatingButtonVisibility();
+        
+        // Update notification badge when state changes to show failed attempts
+        if (state === 'hide') {
+          updateNotificationBadge(0);
+        }
+        
+        // Update auto-refresh when state changes
+        updateAutoRefresh();
+      });
+
+      if (window.api.onRevealHint) {
+        window.api.onRevealHint(() => {
+          const hint = document.getElementById('reveal-hotspot-hint');
+          if (!hint) return;
+          document.body.classList.add('reveal-hint-active');
+          if (window.__snapawayRevealHintTimer) {
+            window.clearTimeout(window.__snapawayRevealHintTimer);
+          }
+          window.__snapawayRevealHintTimer = window.setTimeout(() => {
+            document.body.classList.remove('reveal-hint-active');
+            window.__snapawayRevealHintTimer = null;
+          }, 2200);
+        });
+      }
+
+      // Listen for titlebar toggle
+      window.api.onToggleTitlebar((_, show) => {
+        const titlebar = document.querySelector('.cet-titlebar');
+        console.log('[RENDERER] Toggle titlebar event received:');
+        console.log('  - Show titlebar:', show);
+        console.log('  - Titlebar element found:', !!titlebar);
+        console.log('  - Current body classes:', document.body.className);
+        
+        if (titlebar) {
+          const oldDisplay = titlebar.style.display;
+          titlebar.style.display = show ? 'flex' : 'none';
+          console.log('[RENDERER] Titlebar display changed:', oldDisplay, '→', titlebar.style.display);
+        } else {
+          console.log('[RENDERER] Titlebar element not found');
+        }
+      });
+
+      // Listen for window resize and position
+      // Note: Main process handles actual resize/move via window.setBounds()
+      // This event is only for updating UI mode classes
+      window.api.onResizeWindow((_, x, y, width, height) => {
+        console.log('[RENDERER] Resize window event received:');
+        console.log('  - Target size:', width, 'x', height);
+        console.log('  - Target position:', x, ',', y);
+        console.log('  - Current body classes:', document.body.className);
+        
+        // Use the target dimensions to update UI mode immediately
+        // Main process handles actual window resize via setBounds()
+        const isFloatMode = width <= 50 && height <= 50;
+        const isAuthMode = width <= 200 && height <= 200 && (width > 50 || height > 50);
+        
+        // Only skip mode estimate when auth-mode is real/current
+        if (document.body.classList.contains('auth-mode') && (isSettingPassword || isAuthCheck)) {
+          console.log('[RENDERER] Skipping mode update (target size) - active auth mode');
+        } else {
+          if (isFloatMode) {
+            document.body.classList.remove('main-mode');
+            document.body.classList.add('float-mode');
+            console.log('[RENDERER] Switched to float mode based on target size');
+            updateFloatingButtonDisplay();
+          } else if (isAuthMode) {
+            // Auth mode is handled by auth events, don't change here
+            console.log('[RENDERER] Window size suggests auth mode, but auth mode is handled by events');
+          } else {
+            document.body.classList.remove('float-mode');
+            document.body.classList.add('main-mode');
+            console.log('[RENDERER] Switched to main mode based on target size');
+            updateFloatingButtonDisplay();
+          }
+        }
+        
+        // Update mode after resize completes
+        setTimeout(() => {
+          console.log('[RENDERER] After resize - window size:', window.innerWidth, 'x', window.innerHeight);
+          console.log('[RENDERER] After resize - window position:', window.screenX, ',', window.screenY);
+          console.log('[RENDERER] After resize - body classes:', document.body.className);
+          updateWindowMode();
+          console.log('[RENDERER] Window mode updated after resize');
+          console.log('[RENDERER] Final body classes:', document.body.className);
+        }, 100);
+      });
+
+      // Function to move titlebar elements inside outer-container
+      // DISABLED: The custom-electron-titlebar library already handles the structure correctly
+      function moveTitlebarToOuterContainer() {
+        // Do nothing - let the library handle the titlebar structure
+        return;
+      }
+
+      // Function to automatically detect window mode based on size
+      function updateWindowMode() {
+        // If we still have auth-mode class but auth flow is done, clear it (avoid stale lock)
+        if (document.body.classList.contains('auth-mode') && !isSettingPassword && !isAuthCheck) {
+          console.log('[RENDERER] auth-mode was stale; clearing and allowing mode update');
+          document.body.classList.remove('auth-mode');
+        }
+
+        // Don't change mode if we're actively in auth mode (setting or checking)
+        if (document.body.classList.contains('auth-mode') && (isSettingPassword || isAuthCheck)) {
+          console.log('[RENDERER] Skipping mode update - in auth mode');
+          return;
+        }
+        
+        const width = window.innerWidth;
+        const height = window.innerHeight;
+        const outerWidth = window.outerWidth;
+        const outerHeight = window.outerHeight;
+        
+        // Float mode: 28x28 pixels (button size)
+        // Auth mode: 160x190 pixels
+        // Main mode: anything larger
+        const isFloatMode = width <= 50 && height <= 50; // Slightly larger threshold for detection
+        const isAuthMode = width <= 200 && height <= 200 && (width > 50 || height > 50);
+        
+        // If in hide-state and window is still auth-sized (transitioning), keep float-mode
+        const isHideState = document.body.classList.contains('hide-state');
+        if (isHideState && isAuthMode && !document.body.classList.contains('auth-mode')) {
+          console.log('[RENDERER] In hide-state with auth-sized window (transitioning), keeping float-mode');
+          document.body.classList.remove('main-mode');
+          document.body.classList.add('float-mode');
+          updateFloatingButtonDisplay();
+          return;
+        }
+        
+        console.log('[RENDERER] updateWindowMode called:');
+        console.log('  - Window inner size:', width, 'x', height);
+        console.log('  - Window outer size:', outerWidth, 'x', outerHeight);
+        console.log('  - isFloatMode:', isFloatMode);
+        console.log('  - isAuthMode:', isAuthMode);
+        console.log('  - Current body classes before:', document.body.className);
+        console.log('  - Has main-mode class:', document.body.classList.contains('main-mode'));
+        console.log('  - Has float-mode class:', document.body.classList.contains('float-mode'));
+        
+        if (isFloatMode) {
+          const hadMainMode = document.body.classList.contains('main-mode');
+          const hadFloatMode = document.body.classList.contains('float-mode');
+          
+          document.body.classList.remove('main-mode');
+          document.body.classList.add('float-mode');
+          
+          console.log('[RENDERER] Switched to float mode');
+          console.log('  - Had main-mode:', hadMainMode);
+          console.log('  - Had float-mode:', hadFloatMode);
+          console.log('  - Body classes after:', document.body.className);
+          
+          // Update floating button visibility
+          updateFloatingButtonDisplay();
+        } else if (isAuthMode) {
+          // Don't change to auth mode here - it's handled by auth events
+          console.log('[RENDERER] Window size suggests auth mode, but auth mode is handled by events');
+        } else {
+          const hadMainMode = document.body.classList.contains('main-mode');
+          const hadFloatMode = document.body.classList.contains('float-mode');
+          
+          document.body.classList.remove('float-mode');
+          document.body.classList.add('main-mode');
+          
+          console.log('[RENDERER] Switched to main mode');
+          console.log('  - Had main-mode:', hadMainMode);
+          console.log('  - Had float-mode:', hadFloatMode);
+
+          // Initialize maximize button functionality when in main mode
+          console.log('[RENDERER] Initializing maximize button for main mode');
+
+          setTimeout(() => {
+            console.log('[RENDERER] Calling initializeMaximizeButton');
+            console.log('[RENDERER] initializeMaximizeButton function exists:', typeof initializeMaximizeButton);
+
+            initializeMaximizeButton();
+          }, 500); // Increased delay to ensure titlebar is fully rendered
+          console.log('  - Body classes after:', document.body.className);
+          
+          // Update floating button visibility
+          updateFloatingButtonDisplay();
+        }
+        
+        // Update auto-refresh when mode changes
+        updateAutoRefresh();
+      }
+      
+      function getFloatingButtonMode() {
+        const value = window.config?.showEmergencyButton;
+        if (typeof value === 'boolean') return value ? 'always' : 'never';
+        if (typeof value !== 'string') return 'always';
+
+        const normalized = value.toLowerCase();
+        if (['never', 'no', 'off', 'false'].includes(normalized)) return 'never';
+        if (['visible', 'visible-only', 'only-visible', 'show', 'show-only'].includes(normalized)) return 'visible';
+        if (['learning', 'aprendizado', 'adaptive', 'adaptative', 'training'].includes(normalized)) return 'learning';
+        if (['always', 'yes', 'on', 'true'].includes(normalized)) return 'always';
+        return 'always';
+      }
+
+      function isFloatingButtonEnabled() {
+        const mode = getFloatingButtonMode();
+        if (mode === 'never') return false;
+        return true;
+      }
+
+      function updateFloatingButtonModeClasses() {
+        const mode = getFloatingButtonMode();
+        const isVisibleOnlyMode = mode === 'visible';
+        const isLearningMode = mode === 'learning';
+
+        document.body.classList.toggle('floating-button-mode-visible', isVisibleOnlyMode);
+        document.body.classList.toggle('floating-button-mode-learning', isLearningMode);
+
+        if (!isVisibleOnlyMode && !isLearningMode) {
+          document.body.classList.remove('window-hovered');
+        }
+      }
+
+      // Function to update floating button visibility based on config
+      function getAdaptiveFloatingButtonTranslation() {
+        const count = Number(window.config?.adaptiveFloatingHideCount || 0);
+        if (count >= 5) {
+          // from 5th on, behave like 'Only when visible' (full hide)
+          return 'calc(5vw + 44px)';
+        }
+        if (count === 4) return '75%';
+        if (count === 3) return '65%';
+        if (count === 2) return '55%';
+        return '45%';
+      }
+
+      function setAdaptiveFloatingButtonTranslation() {
+        if (getFloatingButtonMode() !== 'learning') {
+          document.documentElement.style.removeProperty('--floating-button-adaptive-translate');
+          return;
+        }
+
+        const translation = getAdaptiveFloatingButtonTranslation();
+        document.documentElement.style.setProperty('--floating-button-adaptive-translate', translation);
+
+        console.log('[RENDERER] Adaptive floating button translation updated:', translation, 'adaptiveHideCount:', window.config?.adaptiveFloatingHideCount);
+      }
+
+      function updateFloatingButtonVisibility() {
+        updateFloatingButtonModeClasses();
+        setAdaptiveFloatingButtonTranslation();
+
+        const isEnabled = isFloatingButtonEnabled();
+        document.documentElement.style.setProperty('--floating-button-enabled', isEnabled ? 'flex' : 'none');
+        console.log('[RENDERER] Floating button enabled:', isEnabled, 'mode:', getFloatingButtonMode());
+      }
+      
+      // Function to update floating button display based on current mode
+      function updateFloatingButtonDisplay() {
+        const floatingButton = document.getElementById('floating-button');
+        if (!floatingButton) return;
+
+        const isFloatMode = document.body.classList.contains('float-mode');
+        const isAuthMode = document.body.classList.contains('auth-mode');
+        const isEnabled = isFloatingButtonEnabled();
+
+        // Update floating button icon if cloak icon is available
+        // Apply cloak icon to all floating-button variants (covers show/hide/restore elements)
+        const floatingVariants = document.querySelectorAll('[id^="floating-button"]');
+        const cloakPath = window.config?.cloakIconPath;
+        if (cloakPath) {
+          let iconUrl = cloakPath;
+          if (!(iconUrl.startsWith('file://') || iconUrl.startsWith('data:') || iconUrl.startsWith('http://') || iconUrl.startsWith('https://'))) {
+            if (cloakPath.match(/^[A-Za-z]:/)) {
+              iconUrl = `file:///${cloakPath.replace(/\\/g, '/')}`;
+            } else {
+              iconUrl = `file://${cloakPath}`;
+            }
+          }
+          // Only add cache-busting for non-data URLs (data: cannot accept query)
+          const cacheBustedUrl = iconUrl.startsWith('data:') ? iconUrl : `${iconUrl}?t=${Date.now()}`;
+          floatingVariants.forEach(v => {
+            const btn = v.querySelector('button');
+            if (btn) {
+              try {
+                btn.style.setProperty('background-image', `url('${cacheBustedUrl}')`, 'important');
+                btn.style.setProperty('background-size', 'contain', 'important');
+                btn.style.setProperty('background-repeat', 'no-repeat', 'important');
+                btn.style.setProperty('background-position', 'center', 'important');
+                btn.style.setProperty('background-color', 'transparent', 'important');
+              } catch (e) {
+                btn.style.backgroundImage = `url('${cacheBustedUrl}')`;
+                btn.style.backgroundSize = 'contain';
+                btn.style.backgroundRepeat = 'no-repeat';
+                btn.style.backgroundPosition = 'center';
+                btn.style.backgroundColor = 'transparent';
+              }
+            }
+          });
+          // Also set the background on the floating-button container itself
+          try {
+            try {
+              floatingButton.style.setProperty('background-image', `url('${cacheBustedUrl}')`, 'important');
+              floatingButton.style.setProperty('background-size', 'contain', 'important');
+              floatingButton.style.setProperty('background-repeat', 'no-repeat', 'important');
+              floatingButton.style.setProperty('background-position', 'center', 'important');
+              floatingButton.style.setProperty('background-color', 'transparent', 'important');
+            } catch (e) {
+              floatingButton.style.backgroundImage = `url('${cacheBustedUrl}')`;
+              floatingButton.style.backgroundSize = 'contain';
+              floatingButton.style.backgroundRepeat = 'no-repeat';
+              floatingButton.style.backgroundPosition = 'center';
+              floatingButton.style.backgroundColor = 'transparent';
+            }
+          } catch (bgErr) {
+            console.warn('[RENDERER] Could not set floating-button background:', bgErr && bgErr.message ? bgErr.message : bgErr);
+          }
+          console.log('[RENDERER] Floating button variants updated with cloak icon:', cacheBustedUrl);
+        } else {
+          // Reset to default for all variants
+          floatingVariants.forEach(v => {
+            const btn = v.querySelector('button');
+            if (btn) {
+              try {
+                btn.style.removeProperty('background-image');
+                btn.style.removeProperty('background-size');
+                btn.style.removeProperty('background-repeat');
+                btn.style.removeProperty('background-position');
+                // Garantir que o botão permaneça transparente por padrão
+                btn.style.setProperty('background-color', 'transparent', 'important');
+              } catch (e) {
+                btn.style.backgroundImage = '';
+                btn.style.backgroundColor = 'transparent';
+              }
+            }
+          });
+          // Reset floating-button container background to CSS defaults
+          try {
+            try {
+              floatingButton.style.removeProperty('background-image');
+              floatingButton.style.removeProperty('background-size');
+              floatingButton.style.removeProperty('background-repeat');
+              floatingButton.style.removeProperty('background-position');
+              floatingButton.style.removeProperty('background-color');
+            } catch (e) {
+              floatingButton.style.backgroundImage = '';
+              floatingButton.style.backgroundColor = '';
+            }
+          } catch (bgErr) {
+            console.warn('[RENDERER] Could not reset floating-button background:', bgErr && bgErr.message ? bgErr.message : bgErr);
+          }
+          console.log('[RENDERER] Floating button variants reset to default background');
+        }
+        
+        // In auth mode, always hide
+        if (isAuthMode) {
+          floatingButton.style.display = 'none';
+          console.log('[RENDERER] Floating button hidden (auth mode)');
+          return;
+        }
+        
+        // In float mode, show if enabled (let CSS handle it by removing inline style)
+        if (isFloatMode && isEnabled) {
+          floatingButton.style.display = '';
+          console.log('[RENDERER] Floating button display cleared for CSS control (float mode, enabled)');
+        } else if (isFloatMode && !isEnabled) {
+          floatingButton.style.display = 'none';
+          console.log('[RENDERER] Floating button hidden (float mode, disabled)');
+        } else {
+          // In main mode, hide
+          floatingButton.style.display = 'none';
+          console.log('[RENDERER] Floating button hidden (main mode)');
+        }
+      }
+      
+      // Function to update font size based on config
+      function updateFontSize() {
+        const fontSize = window.config?.fontSize || 'medium';
+        // Remove all font size classes
+        document.body.classList.remove('font-size-small', 'font-size-medium', 'font-size-large', 'font-size-xlarge');
+        // Add the current font size class
+        document.body.classList.add(`font-size-${fontSize}`);
+        console.log('[RENDERER] Font size updated to:', fontSize);
+      }
+      
+      // Function to detect system theme preference
+      function getSystemTheme() {
+        if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
+          return 'dark';
+        }
+        return 'light';
+      }
+      
+      // Function to update theme based on config
+      function updateTheme() {
+        // Detect theme source (config > localStorage > default 'auto')
+        const configTheme = (window.config && typeof window.config.theme === 'string') ? window.config.theme : null;
+        const storageTheme = (() => {
+          try { return localStorage.getItem('snapawayTheme'); } catch (e) { return null; }
+        })();
+
+        let theme = configTheme || storageTheme || 'auto';
+        if (!['light', 'dark', 'auto'].includes(theme)) {
+          theme = 'auto';
+        }
+
+        let effectiveTheme = theme === 'auto' ? getSystemTheme() : theme;
+
+        // Remove and re-add body theme classes
+        document.body.classList.remove('theme-light', 'theme-dark');
+        document.body.classList.add(`theme-${effectiveTheme}`);
+
+        // Set data-theme on html and body for maximum CSS coverage
+        document.documentElement.setAttribute('data-theme', effectiveTheme);
+        document.body.setAttribute('data-theme', effectiveTheme);
+
+        // Keep a programmatic trace for debugging
+        window.__snapawayEffectiveTheme = effectiveTheme;
+        window.__snapawayConfigTheme = theme;
+
+        // Maintain preference in localStorage for the next load
+        try { localStorage.setItem('snapawayTheme', theme); } catch (e) {}
+
+        // Force color-scheme to apply the theme
+        // This makes system colors (Canvas, CanvasText, etc.) adapt to the chosen theme
+        if (effectiveTheme === 'dark') {
+          document.documentElement.style.colorScheme = 'dark';
+          document.documentElement.style.setProperty('color-scheme', 'dark');
+        } else {
+          document.documentElement.style.colorScheme = 'light';
+          document.documentElement.style.setProperty('color-scheme', 'light');
+        }
+        
+        // Force a repaint to ensure colors update
+        document.body.offsetHeight; // Trigger reflow
+        
+        // Update titlebar icon when using default (no custom cloak icon)
+        if (!window.config?.cloakIconPath) {
+          updateTitlebarIcon(null);
+        }
+
+        console.log('[RENDERER] Theme updated - config:', theme, 'effective:', effectiveTheme);
+        console.log('[RENDERER] color-scheme set to:', document.documentElement.style.colorScheme);
+        console.log('[RENDERER] body classes:', document.body.className);
+        console.log('[RENDERER] html data-theme:', document.documentElement.getAttribute('data-theme'));
+      }
+      
+      // Listen for system theme changes
+      let themeMediaQuery = null;
+      function setupThemeListener() {
+        if (window.matchMedia) {
+          // Remove existing listener if any
+          if (themeMediaQuery) {
+            themeMediaQuery.removeListener(handleSystemThemeChange);
+          }
+          
+          // Only listen if theme is set to auto
+          if (window.config?.theme === 'auto') {
+            themeMediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
+            themeMediaQuery.addListener(handleSystemThemeChange);
+          }
+        }
+      }
+      
+      function handleSystemThemeChange(event) {
+        if (window.config?.theme === 'auto') {
+          console.log('[RENDERER] System theme changed, updating theme');
+          updateTheme();
+        }
+      }
+      
+      // Function to update border radius based on window position (snap-to-edges)
+      function updateBorderRadius() {
+        // Skip if in floating mode or auth mode
+        if (document.body.classList.contains('float-mode') || document.body.classList.contains('auth-mode')) {
+          console.log('[RENDERER] Skipping border radius update - in floating or auth mode');
+          return;
+        }
+        
+        const threshold = 8; // Distance threshold in pixels
+        const defaultRadius = '9px';
+        const snappedRadius = '0px';
+        
+        // Get window position and size
+        const windowLeft = window.screenX;
+        const windowTop = window.screenY;
+        const windowRight = windowLeft + window.outerWidth;
+        const windowBottom = windowTop + window.outerHeight;
+        
+        // Get screen boundaries
+        const screenLeft = window.screen.availLeft;
+        const screenTop = window.screen.availTop;
+        const screenRight = screenLeft + window.screen.availWidth;
+        const screenBottom = screenTop + window.screen.availHeight;
+        
+        // Calculate distances from each edge
+        // Negative values mean the window is outside the screen boundary
+        const distanceFromLeft = windowLeft - screenLeft;
+        const distanceFromTop = windowTop - screenTop;
+        const distanceFromRight = screenRight - windowRight;
+        const distanceFromBottom = screenBottom - windowBottom;
+        
+        // Determine which corners should be snapped (radius = 0)
+        // A corner should be snapped if ANY of its edges is within threshold distance OR outside the screen
+        // Top-left: snapped if left edge OR top edge is within threshold or outside
+        const snapTopLeft = (distanceFromLeft <= threshold || distanceFromLeft < 0) || 
+                            (distanceFromTop <= threshold || distanceFromTop < 0);
+        // Top-right: snapped if right edge OR top edge is within threshold or outside
+        const snapTopRight = (distanceFromRight <= threshold || distanceFromRight < 0) || 
+                             (distanceFromTop <= threshold || distanceFromTop < 0);
+        // Bottom-left: snapped if left edge OR bottom edge is within threshold or outside
+        const snapBottomLeft = (distanceFromLeft <= threshold || distanceFromLeft < 0) || 
+                               (distanceFromBottom <= threshold || distanceFromBottom < 0);
+        // Bottom-right: snapped if right edge OR bottom edge is within threshold or outside
+        const snapBottomRight = (distanceFromRight <= threshold || distanceFromRight < 0) || 
+                                (distanceFromBottom <= threshold || distanceFromBottom < 0);
+        
+        // Set border radius for each corner
+        const topLeftRadius = snapTopLeft ? snappedRadius : defaultRadius;
+        const topRightRadius = snapTopRight ? snappedRadius : defaultRadius;
+        const bottomLeftRadius = snapBottomLeft ? snappedRadius : defaultRadius;
+        const bottomRightRadius = snapBottomRight ? snappedRadius : defaultRadius;
+        
+        // Update CSS variables
+        document.documentElement.style.setProperty('--border-radius-top-left', topLeftRadius);
+        document.documentElement.style.setProperty('--border-radius-top-right', topRightRadius);
+        document.documentElement.style.setProperty('--border-radius-bottom-left', bottomLeftRadius);
+        document.documentElement.style.setProperty('--border-radius-bottom-right', bottomRightRadius);
+        
+        console.log('[RENDERER] Border radius updated (snap-to-edges):');
+        console.log('  - Window position:', windowLeft, ',', windowTop);
+        console.log('  - Window size:', window.outerWidth, 'x', window.outerHeight);
+        console.log('  - Distances: left=', distanceFromLeft, 'top=', distanceFromTop, 'right=', distanceFromRight, 'bottom=', distanceFromBottom);
+        console.log('  - Corners: TL=', topLeftRadius, 'TR=', topRightRadius, 'BL=', bottomLeftRadius, 'BR=', bottomRightRadius);
+      }
+      
+      // Listen for window resize events
+      window.addEventListener('resize', () => {
+        console.log('[RENDERER] Window resize event triggered:');
+        console.log('  - New size:', window.innerWidth, 'x', window.innerHeight);
+        console.log('  - Outer size:', window.outerWidth, 'x', window.outerHeight);
+        console.log('  - Current body classes:', document.body.className);
+        
+        updateWindowMode();
+        updateBorderRadius();
+      });
+      
+      // Listen for window move events
+      window.addEventListener('move', () => {
+        console.log('[RENDERER] Window move event triggered:');
+        console.log('  - New position:', window.screenX, ',', window.screenY);
+        console.log('  - Current body classes:', document.body.className);
+        
+        updateBorderRadius();
+      });
+      
+      // Auto-refresh system for processes - declare variables and functions first
+      let autoRefreshInterval = null;
+      let isWindowFocused = true;
+      
+      function stopAutoRefresh() {
+        if (autoRefreshInterval) {
+          console.log('[RENDERER] Stopping auto-refresh for processes');
+          clearInterval(autoRefreshInterval);
+          autoRefreshInterval = null;
+        }
+      }
+      
+      function startAutoRefresh() {
+        if (autoRefreshInterval) {
+          clearInterval(autoRefreshInterval);
+        }
+        
+        // Start auto-refresh if in main mode and focused
+        const isMainMode = document.body.classList.contains('main-mode');
+        
+        if (isMainMode && isWindowFocused) {
+          console.log('[RENDERER] Starting auto-refresh for processes (5 second interval)');
+          autoRefreshInterval = setInterval(() => {
+            // Check if still in main mode and focused
+            const stillMainMode = document.body.classList.contains('main-mode');
+            
+            if (stillMainMode && isWindowFocused) {
+              console.log('[RENDERER] Auto-refreshing processes...');
+              // Trigger process refresh by dispatching a custom event
+              window.dispatchEvent(new CustomEvent('autoRefreshProcesses'));
+            } else {
+              console.log('[RENDERER] Stopping auto-refresh - conditions no longer met');
+              stopAutoRefresh();
+            }
+          }, 5000); // 5 seconds interval
+        }
+      }
+      
+      // Update auto-refresh when window mode changes
+      function updateAutoRefresh() {
+        const isMainMode = document.body.classList.contains('main-mode');
+        
+        if (isMainMode && isWindowFocused) {
+          startAutoRefresh();
+        } else {
+          stopAutoRefresh();
+        }
+      }
+      
+      // Listen for window focus/blur events
+      window.addEventListener('focus', () => {
+        console.log('[RENDERER] Window focused');
+        console.log('  - Window size:', window.innerWidth, 'x', window.innerHeight);
+        console.log('  - Window position:', window.screenX, ',', window.screenY);
+        console.log('  - Body classes:', document.body.className);
+        isWindowFocused = true;
+        updateAutoRefresh();
+      });
+      
+      window.addEventListener('blur', () => {
+        console.log('[RENDERER] Window blurred');
+        console.log('  - Window size:', window.innerWidth, 'x', window.innerHeight);
+        console.log('  - Window position:', window.screenX, ',', window.screenY);
+        console.log('  - Body classes:', document.body.className);
+
+        if (document.body.classList.contains('main-mode') && !document.body.classList.contains('auth-mode') && Array.isArray(config.filters) && config.filters.length > 0) {
+          console.log('[RENDERER] Main-mode blur with filters configured - requesting float-mode');
+          window.api.send('request-auto-float-mode-on-blur');
+        }
+
+        isWindowFocused = false;
+        stopAutoRefresh();
+      });
+      
+      // Listen for window move events from main process
+      window.api.onWindowMove(() => {
+        console.log('[RENDERER] Window move event received from main process');
+        console.log('  - Current position:', window.screenX, ',', window.screenY);
+        updateBorderRadius();
+      });
+      
+      // Initial mode detection
+      console.log('[RENDERER] Initial window state:');
+      console.log('  - Window size:', window.innerWidth, 'x', window.innerHeight);
+      console.log('  - Window position:', window.screenX, ',', window.screenY);
+      console.log('  - Body classes before initialization:', document.body.className);
+      
+      updateWindowMode();
+      updateFloatingButtonVisibility();
+      updateFloatingButtonDisplay();
+      updateFontSize();
+      updateBorderRadius();
+      
+      console.log('[RENDERER] Initial window state after initialization:');
+      console.log('  - Body classes after initialization:', document.body.className);
+
+      // Register cloak icon and title listeners AFTER DOM is fully ready
+      // This ensures DOM elements are available when events are sent
+      if (document.readyState === 'loading') {
+        // DOM not ready yet, wait for it
+        document.addEventListener('DOMContentLoaded', registerCloakListeners);
+      } else {
+        // DOM already ready
+        registerCloakListeners();
+      }
+
+      function registerCloakListeners() {
+        console.log('[RENDERER] Registering cloak listeners - DOM ready');
+
+      // Register cloak icon listener
+        window.api.onUpdateCloakIcon((_, iconPath) => {
+          console.log('[RENDERER] Cloak icon update received:', iconPath);
+          if (iconPath) {
+            // Store the latest cloak icon in window.config so other UI can read it
+            window.config = window.config || {};
+            window.config.cloakIconPath = iconPath;
+
+            // Update titlebar icon (function will handle data: / http[s]: / file: URLs correctly)
+            updateTitlebarIcon(iconPath);
+
+            // Prepare a preview URL for settings and components
+            let iconUrl = iconPath;
+            if (!(iconUrl.startsWith('file://') || iconUrl.startsWith('data:') || iconUrl.startsWith('http://') || iconUrl.startsWith('https://'))) {
+              // Treat as a local path
+              if (iconPath.match(/^[A-Za-z]:/)) {
+                iconUrl = `file:///${iconPath.replace(/\\/g, '/')}`;
+              } else {
+                iconUrl = `file://${iconPath}`;
+              }
+            }
+            console.log('[RENDERER] Dispatching cloak-icon-updated for preview:', iconUrl);
+            window.dispatchEvent(new CustomEvent('cloak-icon-updated', { detail: iconUrl }));
+
+            // Also update floating button icon immediately (it will read window.config.cloakIconPath)
+            updateFloatingButtonDisplay();
+          } else {
+            // Clear stored cloak icon
+            window.config = window.config || {};
+            window.config.cloakIconPath = null;
+            updateTitlebarIcon(null);
+            // Reset floating button to default
+            updateFloatingButtonDisplay();
+          }
+        });
+
+        // Listen for cloak title updates
+        window.api.onUpdateCloakTitle((_, title) => {
+          console.log('[RENDERER] Cloak title update received:', title);
+          if (title) {
+            updateTitlebarTitle(title);
+            // also update floating button tooltip
+            updateFloatingButtonTitle(title);
+          }
+        });
+
+        console.log('[RENDERER] Cloak listeners registered successfully');
+      }
+      
+      // Initialize config and listen for config changes to update floating button visibility
+      window.api.getConfig().then(cfg => {
+        window.config = cfg;
+        console.log('[RENDERER] Config initialized:', window.config);
+        updateFloatingButtonVisibility();
+        updateFloatingButtonDisplay(); // This will also set the icon if cloakIconPath exists
+        updateFontSize();
+        updateTheme();
+        // If cloaking is enabled on startup, request main to re-send the cloak icon
+        try {
+          if (window.config && window.config.cloakEnabled && window.config.cloakIconPath && window.api && window.api.applyCloaking) {
+            console.log('[RENDERER] Cloak enabled on startup - requesting applyCloaking to refresh icon');
+            window.api.applyCloaking();
+          }
+        } catch (e) {
+          console.warn('[RENDERER] Failed to request applyCloaking on init:', e && e.message ? e.message : e);
+        }
+        setupThemeListener();
+        
+        // Update titlebar title and icon if cloaking is enabled
+        if (cfg.cloakEnabled) {
+          if (cfg.cloakName) {
+            updateTitlebarTitle(cfg.cloakName);
+            updateFloatingButtonTitle(cfg.cloakName);
+          }
+          // Icon will be updated via update-cloak-icon event
+        }
+        
+        // Initialize body state classes based on current state
+        window.api.getCurrentState().then(state => {
+          console.log('[RENDERER] Current state received:', state);
+          console.log('  - Body classes before state update:', document.body.className);
+
+          // Ensure only one of the state classes exists at a time
+          document.body.classList.remove('show-state', 'hide-state');
+          if (state === 'hide') {
+            document.body.classList.add('hide-state');
+            console.log('[RENDERER] Applied hide-state class');
+          } else {
+            document.body.classList.add('show-state');
+            console.log('[RENDERER] Applied show-state class');
+          }
+
+          console.log('  - Body classes after state update:', document.body.className);
+        });
+      });
+      
+      window.api.onConfigChange((_, newConfig) => {
+        window.config = newConfig;
+        console.log('[RENDERER] Config updated:', window.config);
+        updateFloatingButtonVisibility();
+        updateFloatingButtonDisplay();
+        updateFontSize();
+        updateTheme();
+        setupThemeListener();
+        
+        // Update titlebar title and floating button tooltip if cloaking is enabled
+        if (newConfig.cloakEnabled && newConfig.cloakName) {
+          updateTitlebarTitle(newConfig.cloakName);
+          updateFloatingButtonTitle(newConfig.cloakName);
+        } else if (!newConfig.cloakEnabled) {
+          updateTitlebarTitle('SnapAway');
+          updateFloatingButtonTitle('SnapAway');
+        }
+      });
+      
+      // Listen for previous window state changes
+      window.api.onPreviousWindowStateChange((_, previousState) => {
+        console.log('[MAIN WINDOW] Previous window state changed:', previousState);
+      });
+      
+      // Function to update titlebar title
+      function updateTitlebarTitle(title) {
+        if (!title || typeof title !== 'string') {
+          console.log('[RENDERER] Invalid title provided:', title);
+          return;
+        }
+        
+        // Update both the custom titlebar and the native document title
+        document.title = title;
+        const titleElement = document.querySelector('.cet-window-title');
+        if (titleElement) {
+          titleElement.textContent = title;
+          console.log('[RENDERER] Titlebar title updated to:', title);
+        } else {
+          console.log('[RENDERER] Titlebar title element not found, will retry');
+          // Retry multiple times with increasing delays
+          let retryCount = 0;
+          const maxRetries = 5;
+          const retryInterval = setInterval(() => {
+            retryCount++;
+            const retryTitle = document.querySelector('.cet-window-title');
+            if (retryTitle) {
+              retryTitle.textContent = title;
+              console.log('[RENDERER] Titlebar title updated on retry:', title);
+              clearInterval(retryInterval);
+            } else if (retryCount >= maxRetries) {
+              console.error('[RENDERER] Failed to find titlebar title element after', maxRetries, 'retries');
+              clearInterval(retryInterval);
+            }
+          }, 200);
+        }
+      }
+
+      // Function to update floating button title/tooltip
+      function updateFloatingButtonTitle(title) {
+        try {
+          const floatingButton = document.getElementById('floating-button');
+          if (!floatingButton) return;
+          const btn = floatingButton.querySelector('button');
+          const effective = (title && typeof title === 'string' && title.trim()) ? title : 'SnapAway';
+          if (btn) {
+            btn.setAttribute('title', effective);
+            btn.setAttribute('aria-label', effective);
+            console.log('[RENDERER] Floating button title set to:', effective);
+          }
+        } catch (err) {
+          console.warn('[RENDERER] Failed to update floating button title:', err && err.message ? err.message : err);
+        }
+      }
+      
+      // Resolve icon path to URL, handling packed AppX/NSIS and dev mode paths
+      function resolveTitlebarIconUrl(iconPath) {
+        if (!iconPath || typeof iconPath !== 'string') return null;
+        const trimmed = iconPath.trim();
+        if (/^(data:|https?:|file:)/i.test(trimmed)) {
+          return trimmed;
+        }
+
+        // Windows absolute path support
+        if (/^[A-Za-z]:[\\/]/.test(trimmed)) {
+          return `file:///${trimmed.replace(/\\/g, '/').replace(/^\/+/, '')}`;
+        }
+
+        try {
+          // Resolve relative paths against current document (works in app.asar and installer contexts)
+          return new URL(trimmed, window.location.href).toString();
+        } catch (error) {
+          console.warn('[RENDERER] Failed to resolve titlebar icon URL:', trimmed, error && error.message ? error.message : error);
+          return trimmed;
+        }
+      }
+
+      function getThemeFallbackIconCandidates() {
+        let effectiveTheme = 'light';
+
+        if (window.config && window.config.theme) {
+          effectiveTheme = window.config.theme === 'auto' ?
+            (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light') :
+            window.config.theme;
+        } else {
+          effectiveTheme = (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) ? 'dark' : 'light';
+        }
+
+        const isDarkTheme = effectiveTheme === 'dark' || document.body.classList.contains('theme-dark') || document.documentElement.getAttribute('data-theme') === 'dark';
+        const preferredIconName = isDarkTheme ? 'tray-white.png' : 'tray-black.png';
+        const alternateIconName = isDarkTheme ? 'tray-black.png' : 'tray-white.png';
+
+        const isDevServer = window.location && /^https?:$/i.test(window.location.protocol);
+        const candidateRelativePaths = isDevServer
+          ? [
+              `/assets/images/${preferredIconName}`,
+              `/assets/images/${alternateIconName}`,
+              `assets/images/${preferredIconName}`,
+              `assets/images/${alternateIconName}`
+            ]
+          : [
+              `${preferredIconName}`,
+              `${alternateIconName}`,
+              `out/renderer/${preferredIconName}`,
+              `out/renderer/${alternateIconName}`,
+              `assets/images/${preferredIconName}`,
+              `assets/images/${alternateIconName}`,
+              `/out/renderer/${preferredIconName}`,
+              `/out/renderer/${alternateIconName}`,
+              `/assets/images/${preferredIconName}`,
+              `/assets/images/${alternateIconName}`
+            ];
+
+        const seen = new Set();
+        return candidateRelativePaths
+          .map((relative) => resolveTitlebarIconUrl(relative))
+          .filter((candidate) => {
+            if (!candidate || seen.has(candidate)) {
+              return false;
+            }
+            seen.add(candidate);
+            return true;
+          });
+      }
+
+      function getThemeFallbackIconUrl() {
+        const candidates = getThemeFallbackIconCandidates();
+        return candidates.length > 0 ? candidates[0] : null;
+      }
+
+      function ensureTitlebarIconElement() {
+        let img = document.querySelector('.cet-window-icon img');
+        if (img) return img;
+
+        let iconContainer = document.querySelector('.cet-window-icon');
+        if (!iconContainer) {
+          iconContainer = document.createElement('div');
+          iconContainer.classList.add('cet-window-icon');
+        }
+
+        img = iconContainer.querySelector('img');
+        if (!img) {
+          img = document.createElement('img');
+          iconContainer.appendChild(img);
+        }
+
+        const titlebar = document.querySelector('.cet-titlebar');
+        const title = document.querySelector('.cet-window-title');
+
+        if (titlebar && !iconContainer.parentNode) {
+          if (title) {
+            titlebar.insertBefore(iconContainer, title);
+          } else {
+            titlebar.insertBefore(iconContainer, titlebar.firstChild);
+          }
+        }
+
+        return img;
+      }
+
+      // Function to update titlebar icon with improved retry logic
+      // Setup listener to re-apply icon once cetTitlebar is ready
+      if (!window.cetTitlebarReady) {
+        window.addEventListener('cetTitlebarReady', () => {
+          console.log('[RENDERER] cetTitlebarReady event received');
+          if (window.__pendingTitlebarIconUpdate !== undefined) {
+            updateTitlebarIcon(window.__pendingTitlebarIconUpdate);
+            window.__pendingTitlebarIconUpdate = undefined;
+          }
+        }, { once: true });
+      }
+
+      function updateTitlebarIcon(iconPath) {
+        console.log('[RENDERER] updateTitlebarIcon called with:', iconPath);
+
+        if (!window.cetTitlebarReady) {
+          console.log('[RENDERER] cetTitlebar not ready yet, deferring icon update:', iconPath);
+          window.__pendingTitlebarIconUpdate = iconPath;
+        }
+
+        // Helper function to apply the icon update
+        const applyIconUpdate = (iconElement) => {
+          let resolvedIcon;
+
+          if (!iconPath) {
+            // Setup ordered candidate list for theme fallback (some builds ship files in different locations)
+            window.__titlebarIconCandidates = getThemeFallbackIconCandidates();
+            resolvedIcon = window.__titlebarIconCandidates.shift();
+            console.log('[RENDERER] Titlebar icon reverted to theme-based default candidate:', resolvedIcon, 'remaining candidates:', window.__titlebarIconCandidates);
+          } else {
+            resolvedIcon = resolveTitlebarIconUrl(iconPath);
+          }
+
+          if (!resolvedIcon) {
+            console.error('[RENDERER] No resolved titlebar icon URL available', iconPath);
+            return;
+          }
+
+          const setIconSrc = (url) => {
+            const finalUrl = url.startsWith('data:') ? url : `${url}?t=${Date.now()}`;
+
+            iconElement.onerror = () => {
+              console.warn('[RENDERER] Titlebar icon failed to load:', finalUrl);
+              iconElement.onerror = null;
+
+              if (iconPath) {
+                // Requested explicit icon failed; fall back to theme defaults
+                updateTitlebarIcon(null);
+                return;
+              }
+
+              const nextCandidate = window.__titlebarIconCandidates && window.__titlebarIconCandidates.length ? window.__titlebarIconCandidates.shift() : null;
+              if (nextCandidate) {
+                console.log('[RENDERER] Trying next titlebar icon candidate:', nextCandidate);
+                setIconSrc(nextCandidate);
+              } else {
+                console.error('[RENDERER] All titlebar icon candidates failed');
+              }
+            };
+
+            iconElement.src = finalUrl;
+            console.log('[RENDERER] Titlebar icon updated to:', finalUrl);
+
+            // Also update custom-electron-titlebar icon if available
+            if (window.cetTitlebar && typeof window.cetTitlebar.updateIcon === 'function') {
+              try {
+                window.cetTitlebar.updateIcon(finalUrl);
+                console.log('[RENDERER] Cet titlebar icon set via cetTitlebar.updateIcon:', finalUrl);
+              } catch (error) {
+                console.warn('[RENDERER] Failed cetTitlebar.updateIcon:', error);
+              }
+            }
+
+            // Also update .cet-icon if present (legacy/titlebar library DOM form)
+            const visibleTitlebarIcon = document.querySelector('.cet-icon img');
+            if (visibleTitlebarIcon) {
+              visibleTitlebarIcon.src = finalUrl;
+              console.log('[RENDERER] Cet icon element updated directly:', finalUrl);
+            }
+
+            // Also update preview in settings if available
+            if (window.config && window.config.cloakEnabled) {
+              console.log('[RENDERER] Dispatching cloak-icon-updated event with:', finalUrl);
+              window.dispatchEvent(new CustomEvent('cloak-icon-updated', { detail: finalUrl }));
+            }
+          };
+
+          setIconSrc(resolvedIcon);
+        };
+
+        const tryUpdateIcon = () => {
+          let titlebarIcon = document.querySelector('.cet-window-icon img');
+
+          if (!titlebarIcon) {
+            titlebarIcon = ensureTitlebarIconElement();
+          }
+
+          const hasIcon = !!titlebarIcon;
+          console.log('[RENDERER] Titlebar icon element found:', hasIcon);
+
+          if (titlebarIcon) {
+            applyIconUpdate(titlebarIcon);
+            return true;
+          }
+
+          return false;
+        };
+
+        // Try immediately first
+        if (tryUpdateIcon()) {
+          return;
+        }
+
+        // If not found, implement exponential backoff retry
+        console.log('[RENDERER] Titlebar icon element not found, will retry with exponential backoff');
+
+        let retryCount = 0;
+        const maxRetries = 10;
+        const baseDelay = 100; // Start with 100ms
+
+        const retryInterval = setInterval(() => {
+          retryCount++;
+          const currentDelay = baseDelay * Math.pow(1.5, retryCount - 1); // Exponential backoff
+
+          console.log(`[RENDERER] Retry ${retryCount}/${maxRetries} (delay: ${currentDelay}ms)`);
+
+          if (tryUpdateIcon()) {
+            console.log(`[RENDERER] Titlebar icon updated successfully on retry ${retryCount}`);
+            clearInterval(retryInterval);
+            return;
+          }
+
+          if (retryCount >= maxRetries) {
+            console.error('[RENDERER] Failed to find titlebar icon element after', maxRetries, 'retries');
+            clearInterval(retryInterval);
+          }
+        }, baseDelay);
+
+        // Also try with a longer initial delay in case the element is being created
+        setTimeout(() => {
+          if (tryUpdateIcon()) {
+            console.log('[RENDERER] Titlebar icon updated with longer initial delay');
+            clearInterval(retryInterval);
+          }
+        }, 500);
+      }
+      
+      // Note: Cloak icon and title listeners are registered earlier, before config initialization
+
+      // Listen for notification badge updates
+      window.api.onUpdateNotificationBadge((_, count) => {
+        console.log('[RENDERER] Updating notification badge count to:', count);
+        updateNotificationBadge(count);
+      });
+
+      // Listen for auth events
+      window.api.onAuthRequest(() => {
+        console.log('[RENDERER] Auth request received');
+        // ask main process to ensure window is the auth size
+        window.api.send('force-auth-resize');
+
+        console.log('  - Window size before auth:', window.innerWidth, 'x', window.innerHeight);
+        console.log('  - Window position before auth:', window.screenX, ',', window.screenY);
+        console.log('  - Body classes before auth:', document.body.className);
+        
+        console.log('[RENDERER] Auth request - validating password');
+        isSettingPassword = false;
+        isAuthCheck = true; // for auth flow
+        isFirstPasswordInput = false; // not creating password
+        firstPassword = ''; // Limpar primeira senha
+
+        // Remove all mode classes and add only auth-mode
+        document.body.classList.remove('main-mode', 'float-mode');
+        document.body.classList.add('auth-mode');
+        
+        console.log('[RENDERER] Auth mode applied');
+        console.log('  - Body classes after auth mode:', document.body.className);
+        
+        document.querySelector('.keypad-container').style.display = 'flex';
+        // Hide other elements during auth
+        updateFloatingButtonDisplay();
+        document.getElementById('main-app').style.display = 'none';
+
+        // Ensure password prompt text is fresh in this auth request mode
+        updateDisplay();
+
+        // For backward safety: clear any stale setting-password indicators
+        setTimeout(() => {
+          isSettingPassword = false;
+          isAuthCheck = true;
+          updateDisplay();
+        }, 0);
+        
+        // Focus on the keypad container to capture keyboard events
+        setTimeout(() => {
+          const keypadContainer = document.querySelector('.keypad-container');
+          if (keypadContainer) {
+            keypadContainer.focus();
+            console.log('[RENDERER] Focus set on keypad container');
+          }
+        }, 100);
+      });
+
+      window.api.onAuthCheck(() => {
+        console.log('[RENDERER] Auth check received (confirm existing password)');
+        window.api.send('force-auth-resize');
+
+        isSettingPassword = false;
+        isAuthCheck = true;
+        isFirstPasswordInput = true;
+        firstPassword = '';
+
+        document.body.classList.remove('main-mode', 'float-mode');
+        document.body.classList.add('auth-mode');
+        document.querySelector('.keypad-container').style.display = 'flex';
+        updateFloatingButtonDisplay();
+        document.getElementById('main-app').style.display = 'none';
+
+        setTimeout(() => {
+          const keypadContainer = document.querySelector('.keypad-container');
+          if (keypadContainer) {
+            keypadContainer.focus();
+            console.log('[RENDERER] Focus set on keypad container for auth check');
+          }
+        }, 100);
+      });
+
+      window.api.onAuthInput(() => {
+        console.log('[RENDERER] Auth input request received');
+        console.log('  - Window size before auth input:', window.innerWidth, 'x', window.innerHeight);
+        console.log('  - Window position before auth input:', window.screenX, ',', window.screenY);
+        console.log('  - Body classes before auth input:', document.body.className);
+        
+        console.log('[RENDERER] Auth input requested - setting new password');
+        isSettingPassword = true;
+        isFirstPasswordInput = true; // Reset para primeira digitação
+        firstPassword = ''; // Limpar primeira senha
+        
+        // Remove all mode classes and add only auth-mode
+        document.body.classList.remove('main-mode', 'float-mode');
+        document.body.classList.add('auth-mode');
+        
+        console.log('[RENDERER] Auth input mode applied');
+        console.log('  - Body classes after auth input mode:', document.body.className);
+        
+        document.querySelector('.keypad-container').style.display = 'flex';
+        // Hide other elements during auth
+        updateFloatingButtonDisplay();
+        document.getElementById('main-app').style.display = 'none';
+        
+        // Reset password and display
+        password = '';
+        updateDisplay();
+        
+        // Focus on the keypad container to capture keyboard events
+        setTimeout(() => {
+          const keypadContainer = document.querySelector('.keypad-container');
+          if (keypadContainer) {
+            keypadContainer.focus();
+            console.log('[RENDERER] Focus set on keypad container for password input');
+          }
+        }, 100);
+      });
+
+      window.addEventListener('auth-success', () => {
+        console.log('[RENDERER] Auth success event triggered');
+        console.log('  - Body classes before auth success:', document.body.className);
+        
+        document.querySelector('.keypad-container').style.display = 'none';
+        // Remove auth mode first
+        document.body.classList.remove('auth-mode');
+        
+        console.log('[RENDERER] Auth mode removed after success');
+        console.log('  - Body classes after auth success:', document.body.className);
+        
+        // Send success result to main process first
+        window.api.send('auth-result-response', true);
+        
+        // Immediately ensure a mode is set based on current window state
+        // This prevents the window from being in no mode state
+        const isHideState = document.body.classList.contains('hide-state');
+        const currentWidth = window.innerWidth;
+        const currentHeight = window.innerHeight;
+        const isFloatMode = currentWidth <= 50 && currentHeight <= 50;
+        const isAuthMode = currentWidth <= 200 && currentHeight <= 200 && (currentWidth > 50 || currentHeight > 50);
+        const isMainMode = currentWidth > 200 || currentHeight > 200;
+
+        // If in hide-state, we should be in float-mode
+        if (isHideState) {
+          document.body.classList.remove('main-mode');
+          document.body.classList.add('float-mode');
+          console.log('[RENDERER] In hide-state, forcing float-mode after auth success');
+        } else if (isFloatMode) {
+          // Window is still small (transitioning), use float-mode temporarily
+          document.body.classList.remove('main-mode');
+          document.body.classList.add('float-mode');
+          console.log('[RENDERER] Window is small, using float-mode temporarily after auth success');
+        } else if (isMainMode) {
+          // Window is large enough for main-mode
+          document.body.classList.remove('float-mode');
+          document.body.classList.add('main-mode');
+          console.log('[RENDERER] Window is large, using main-mode after auth success');
+        } else if (isAuthMode) {
+          // Window still has auth-sized dimensions — prefer float-mode until main process resizes
+          document.body.classList.remove('main-mode');
+          document.body.classList.add('float-mode');
+          console.log('[RENDERER] Window is auth-sized after auth success — using float-mode until resize');
+        } else {
+          // Default to float-mode to avoid applying main layout to an auth-sized window
+          document.body.classList.remove('main-mode');
+          document.body.classList.add('float-mode');
+          console.log('[RENDERER] Defaulting to float-mode after auth success (will be updated by resize event)');
+        }
+        
+        // Update floating button visibility after leaving auth mode
+        updateFloatingButtonDisplay();
+        
+        // Also call updateWindowMode after a short delay to ensure consistency
+        // The main process will resize the window and trigger updateWindowMode via the resize event
+        setTimeout(() => {
+          updateWindowMode();
+          console.log('[RENDERER] Window mode updated after auth success delay');
+        }, 100);
+      });
+      
+      // Listen for password set success
+      window.api.onPasswordSet(() => {
+        console.log('[RENDERER] Password set successfully');
+        console.log('  - Body classes before password set:', document.body.className);
+        
+        document.querySelector('.keypad-container').style.display = 'none';
+        // Reset states
+        isSettingPassword = false;
+        isFirstPasswordInput = true;
+        firstPassword = '';
+        password = '';
+        // Remove auth mode first
+        document.body.classList.remove('auth-mode');
+        
+        console.log('[RENDERER] Auth mode removed after password set');
+        console.log('  - Body classes after password set:', document.body.className);
+        
+        // Immediately ensure a mode is set based on current window state
+        const isHideState = document.body.classList.contains('hide-state');
+        const currentWidth = window.innerWidth;
+        const currentHeight = window.innerHeight;
+        const isFloatMode = currentWidth <= 50 && currentHeight <= 50;
+        const isAuthMode = currentWidth <= 200 && currentHeight <= 200 && (currentWidth > 50 || currentHeight > 50);
+        const isMainMode = currentWidth > 200 || currentHeight > 200;
+
+        // If in hide-state, we should be in float-mode
+        if (isHideState) {
+          document.body.classList.remove('main-mode');
+          document.body.classList.add('float-mode');
+          console.log('[RENDERER] In hide-state, forcing float-mode after password set');
+        } else if (isFloatMode) {
+          document.body.classList.remove('main-mode');
+          document.body.classList.add('float-mode');
+          console.log('[RENDERER] Window is small, using float-mode after password set');
+        } else if (isMainMode) {
+          document.body.classList.remove('float-mode');
+          document.body.classList.add('main-mode');
+          console.log('[RENDERER] Window is large, using main-mode after password set');
+        } else if (isAuthMode) {
+          // Window still has auth-sized dimensions — prefer float-mode until main process resizes
+          document.body.classList.remove('main-mode');
+          document.body.classList.add('float-mode');
+          console.log('[RENDERER] Window is auth-sized after password set — using float-mode until resize');
+        } else {
+          // Default to float-mode to avoid applying main layout to an auth-sized window
+          document.body.classList.remove('main-mode');
+          document.body.classList.add('float-mode');
+          console.log('[RENDERER] Defaulting to float-mode after password set');
+        }
+        
+        // Update floating button visibility after leaving auth mode
+        updateFloatingButtonDisplay();
+        
+        // Let CSS handle the mode switching based on window size
+        updateWindowMode();
+        updateTheme();
+
+        // If password is set and we're not in hide-state, request main-mode restore
+        // to avoid staying in float-mode while still auth-sized.
+        if (!document.body.classList.contains('hide-state')) {
+          console.log('[RENDERER] Password set - requesting main-mode restore via floating-button-restore');
+          window.api.send('floating-button-restore');
+        }
+
+        // Forçar atualização do config após definir senha
+        window.api.getConfig().then(cfg => {
+          window.config = cfg;
+          console.log('[RENDERER] Config atualizado após definir senha:', window.config);
+          setupThemeListener();
+        });
+      });
+
+      window.addEventListener('auth-error', () => {
+        console.log('[RENDERER] Auth error event triggered');
+        console.log('  - Body classes before auth error:', document.body.className);
+        
+        document.body.classList.add('auth-mode-failure');
+        setTimeout(() => {
+          document.body.classList.remove('auth-mode-failure');
+          console.log('[RENDERER] Auth error mode removed');
+        }, 1000);
+      });
+      
+      // Handle auth cancel event
+      window.api.onAuthCanceled(() => {
+        console.log('[RENDERER] Auth canceled event received');
+        console.log('  - Window size before auth cancel:', window.innerWidth, 'x', window.innerHeight);
+        console.log('  - Window position before auth cancel:', window.screenX, ',', window.screenY);
+        console.log('  - Body classes before auth cancel:', document.body.className);
+
+        document.querySelector('.keypad-container').style.display = 'none';
+        // Reset states
+        isSettingPassword = false;
+        isAuthCheck = false;
+        isFirstPasswordInput = true;
+        firstPassword = '';
+        password = '';
+
+        // Remove auth-mode classes and explicitly set expected mode for rendering
+        document.body.classList.remove('auth-mode', 'auth-mode-failure');
+        if (document.body.classList.contains('hide-state')) {
+          document.body.classList.remove('main-mode');
+          document.body.classList.add('float-mode');
+        } else {
+          document.body.classList.remove('float-mode');
+          document.body.classList.add('main-mode');
+        }
+
+        // Update visuals
+        updateFloatingButtonDisplay();
+
+        // After a short delay, harmonize with window size mode logic
+        setTimeout(() => {
+          updateWindowMode();
+          updateFloatingButtonDisplay();
+        }, 100);
+      });
+
+      // Handle auth cancel (when user closes the window during auth)
+      window.addEventListener('beforeunload', () => {
+        if (document.querySelector('.keypad-container').style.display === 'flex') {
+          document.body.classList.remove('auth-mode');
+          window.api.send('auth-canceled');
+        }
+      });
+
+      // DISABLED: MutationObserver for titlebar - let the library handle it
+      // The custom-electron-titlebar library already creates the correct structure
+
+      // Double-click on titlebar title to toggle maximize/restore
+      function setupTitlebarDoubleClick() {
+        // Wait for titlebar to be created
+        const checkTitlebar = setInterval(() => {
+          const titleElement = document.querySelector('.cet-window-title');
+          if (titleElement) {
+            clearInterval(checkTitlebar);
+            
+            // Add double-click listener
+            titleElement.addEventListener('dblclick', (e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              window.api.toggleMaximize();
+            });
+            
+          }
+        }, 100);
+      }
+      
+      // Setup titlebar double-click after DOM is ready
+      if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', setupTitlebarDoubleClick);
+      } else {
+        setupTitlebarDoubleClick();
+      }
+
+      // Função global para definir o caractere de máscara
+      window.setMaskChar = async function(charOrHTMLEntity) {
+        try {
+          console.log('[RENDERER] Setting mask character to:', charOrHTMLEntity);
+          const success = await window.api.setMaskChar(charOrHTMLEntity);
+          if (success) {
+            console.log('[RENDERER] Mask character set successfully');
+            // Forçar atualização da UI se necessário
+            if (window.updateMaskDisplay) {
+              window.updateMaskDisplay();
+            }
+          } else {
+            console.error('[RENDERER] Failed to set mask character');
+          }
+          return success;
+        } catch (error) {
+          console.error('[RENDERER] Error setting mask character:', error);
+          return false;
+        }
+      };
+
+      // Função para atualizar a exibição da máscara (pode ser chamada após mudança)
+      window.updateMaskDisplay = function() {
+        // Disparar um evento customizado para forçar atualização dos componentes
+        window.dispatchEvent(new CustomEvent('maskCharChanged'));
+      };
+    </script>
+    <!-- build‑time bundle no longer used; Vite injects JS/CS/other assets -->
+  </body>
+</html>

@@ -1,0 +1,80 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Package
+  xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
+  xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
+  xmlns:uap3="http://schemas.microsoft.com/appx/manifest/uap/windows10/3"
+  xmlns:desktop="http://schemas.microsoft.com/appx/manifest/desktop/windows10"
+  xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
+  IgnorableNamespaces="uap uap3 desktop rescap">
+
+  <Identity
+    Name="${appId}"
+    ProcessorArchitecture="${arch}"
+    Publisher="${publisherName}"
+    Version="${version}" />
+
+  <Properties>
+    <DisplayName>${productName}</DisplayName>
+    <PublisherDisplayName>${publisherDisplayName}</PublisherDisplayName>
+    <Description>${description}</Description>
+    <Logo>assets\StoreLogo.png</Logo>
+  </Properties>
+
+  <Resources>
+    <Resource Language="ar" />
+    <Resource Language="cs" />
+    <Resource Language="de" />
+    <Resource Language="el" />
+    <Resource Language="en-US" />
+    <Resource Language="es" />
+    <Resource Language="fr" />
+    <Resource Language="hi" />
+    <Resource Language="hu" />
+    <Resource Language="it" />
+    <Resource Language="ja" />
+    <Resource Language="ko" />
+    <Resource Language="nl" />
+    <Resource Language="pl" />
+    <Resource Language="pt" />
+    <Resource Language="ru" />
+    <Resource Language="sv" />
+    <Resource Language="th" />
+    <Resource Language="tr" />
+    <Resource Language="zh-CN" />
+  </Resources>
+
+  <Dependencies>
+    <TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.14316.0" MaxVersionTested="10.0.22621.0" />
+  </Dependencies>
+
+  <Capabilities>
+    <rescap:Capability Name="runFullTrust" />
+  </Capabilities>
+
+  <Applications>
+    <Application Id="${executableName}" Executable="app\${executableName}.exe" EntryPoint="Windows.FullTrustApplication">
+      <uap:VisualElements
+        BackgroundColor="transparent"
+        DisplayName="${productName}"
+        Square150x150Logo="assets\Square150x150Logo.png"
+        Square44x44Logo="assets\Square44x44Logo.png"
+        Description="${description}"
+        dpiAware="true">
+        <uap:DefaultTile Wide310x150Logo="assets\Wide310x150Logo.png">
+          <uap:ShowNameOnTiles>
+            <uap:ShowOn Tile="square150x150Logo" />
+            <uap:ShowOn Tile="wide310x150Logo" />
+          </uap:ShowNameOnTiles>
+        </uap:DefaultTile>
+        <uap:SplashScreen Image="assets\SplashScreen.png" BackgroundColor="transparent" />
+        <uap:LockScreen Notification="badge" BadgeLogo="assets\Square44x44Logo.targetsize-24_altform-unplated.png" />
+      </uap:VisualElements>
+      <Extensions>
+        <desktop:Extension Category="windows.startupTask" Executable="app\${executableName}.exe" EntryPoint="Windows.FullTrustApplication">
+          <desktop:StartupTask TaskId="SnapAway" Enabled="false" DisplayName="${productName}" Arguments="--autostart" />
+        </desktop:Extension>
+      </Extensions>
+    </Application>
+  </Applications>
+
+</Package>

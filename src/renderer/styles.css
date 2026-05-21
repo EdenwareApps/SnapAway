@@ -1,0 +1,235 @@
+input, button, select, option {
+  font-size: inherit;
+  font-family: inherit;
+}
+
+/* Authentication Prompt Styles */
+.auth-prompt {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: rgba(0, 0, 0, 0.8);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+}
+
+.auth-container {
+  background: #2d2d2d;
+  border: 1px solid #444;
+  border-radius: 8px;
+  padding: 20px;
+  width: 200px;
+  text-align: center;
+}
+
+.auth-title {
+  color: #fff;
+  font-size: 14px;
+  margin-bottom: 15px;
+  font-weight: 500;
+}
+
+#auth-input {
+  width: 100%;
+  padding: 8px;
+  border: 1px solid #555;
+  border-radius: 4px;
+  background: #1e1e1e;
+  color: #fff;
+  font-size: 14px;
+  margin-bottom: 15px;
+  text-align: center;
+}
+
+#auth-input:focus {
+  outline: none;
+  border-color: #0078d4;
+}
+
+.auth-buttons {
+  display: flex;
+  gap: 10px;
+  justify-content: center;
+}
+
+.auth-buttons button {
+  padding: 6px 12px;
+  border: none;
+  border-radius: 4px;
+  background: #0078d4;
+  color: #fff;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.auth-buttons button:hover {
+  background: #106ebe;
+}
+
+#auth-cancel {
+  background: #555;
+}
+
+#auth-cancel:hover {
+  background: #666;
+}
+
+/* Auth mode styles */
+.auth-mode {
+  background: transparent !important;
+}
+
+.auth-mode .cet-titlebar {
+  display: none !important;
+}
+
+.cet-icon-options {
+  padding: 0 12px;
+  display: inline-flex;
+  width: auto !important;
+}
+
+/* Floating button styles */
+#floating-button {
+  position: fixed;
+  top: 0;
+  right: 0;
+  width: 100vw;
+  height: 100vw;
+  border: none;
+  cursor: pointer;
+  z-index: 1000;
+  display: var(--floating-button-enabled, block);
+}
+
+#floating-button button {
+  width: 100%;
+  height: 100%;
+  border: none;
+  border-radius: 50%;
+  background-color: transparent !important;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative; /* needed for scan line pseudo */
+  overflow: hidden;
+}
+
+/* Scan line effect used in show-state when pointer is over floating button */
+#floating-button button::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    to bottom,
+    transparent 40%,
+    rgba(255, 255, 255, 0.85) 50%,
+    transparent 60%
+  );
+  transform: translateY(-120%);
+  opacity: 0;
+  pointer-events: none;
+}
+
+body.show-state #floating-button:hover button::after {
+  opacity: 1;
+  animation: scanLine 3s linear forwards;
+}
+
+body.show-state.floating-button-wait-mouseenter #floating-button:hover button::after {
+  /* When just restored from hide-state, ignore existing hover until explicit re-enter */
+  opacity: 0 !important;
+  animation: none !important;
+}
+
+body.show-state #floating-button:not(:hover) button::after {
+  opacity: 0;
+  animation: none;
+  transform: translateY(-120%);
+}
+
+/* Stop scan line when main mode is present */
+body.main-mode #floating-button button::after {
+  opacity: 0 !important;
+  animation: none !important;
+  transform: translateY(-120%) !important;
+}
+
+#floating-button:hover {
+  transform: scale(1.1);
+}
+
+#floating-button.hidden-state {
+  display: none;
+}
+
+/* Global body/html styles */
+body, html {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+#app {
+  width: 100%;
+  height: 100%;
+}
+
+/* Window mode styles */
+
+.floating-mode {
+  background: transparent;
+}
+
+.floating-mode .cet-titlebar {
+  display: none !important;
+}
+
+@keyframes scanLine {
+  0% {
+    transform: translateY(-120%);
+  }
+  100% {
+    transform: translateY(220%);
+  }
+}
+
+/* Font size classes */
+.font-size-small {
+  font-size: 12px;
+}
+
+.font-size-medium {
+  font-size: 14px;
+}
+
+.font-size-large {
+  font-size: 16px;
+}
+
+.font-size-xlarge {
+  font-size: 18px;
+}
+
+/* Border radius variables */
+:root {
+  --border-radius-top: 9px;
+  --border-radius-bottom: 9px;
+}
+
+/* Apply border radius to main container */
+.main-mode #outer-container {
+  border-radius: var(--border-radius-top) var(--border-radius-top) var(--border-radius-bottom) var(--border-radius-bottom);
+  overflow: hidden;
+}
+
+::placeholder {
+  color: ButtonText !important;
+}

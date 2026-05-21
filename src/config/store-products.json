@@ -1,0 +1,52 @@
+﻿{
+  "store": {
+    "appId": "app.edenware.snapcover",
+    "publisherDisplayName": "Edenware",
+      "products": {
+        "Pro": {
+          "id": "9NNLVZPCLLTZ",
+          "type": "durable",
+          "title": "SnapAway Pro Lifetime",
+          "description": "Unlock all SnapAway features forever. Remove all usage limits and access exclusive Pro tools.",
+          "features": [
+            "no-app-limit",
+            "password-protection",
+            "audio-control",
+            "priority-support",
+            "advanced-customization"
+          ]
+        }
+      },
+    "features": {
+      "no-app-limit": {
+        "name": "Unlimited Apps",
+        "description": "Remove the free version limit and manage unlimited applications.",
+        "Pro": true
+      },
+      "password-protection": {
+        "name": "Password Protection",
+        "description": "Protect your SnapAway with a password for extra security.",
+        "Pro": true
+      },
+      "audio-control": {
+        "name": "Audio Control",
+        "description": "Mute hidden apps automatically for privacy.",
+        "Pro": true
+      },
+      "priority-support": {
+        "name": "Priority Support",
+        "description": "Get fast, priority support from the SnapAway team.",
+        "Pro": true
+      },
+      "advanced-customization": {
+        "name": "Advanced Customization",
+        "description": "Unlock all advanced customization and cloaking features.",
+        "Pro": true
+      }
+    },
+    "devCertificate": {
+      "subject": "CN=EDENWARE, O=EDENWARE, S=Rio Grande do Sul, C=BR",
+      "thumbprint": "TO_BE_UPDATED_AFTER_PARTNER_CENTER"
+    }
+  }
+}
