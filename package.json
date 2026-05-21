@@ -97,7 +97,6 @@
     "copyright": "Copyright © 2024 Edenware.app",
     "extraResources": [
       "LICENSE",
-      "icon-extractor.ps1",
       "src/helper/SnapAwayHelper.exe"
     ],
     "publish": [
