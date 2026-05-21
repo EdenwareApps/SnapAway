@@ -3,7 +3,7 @@
   "productName": "SnapAway",
   "version": "1.0.9",
   "main": "out/main/index.js",
-  "license": "Apache-2.0",
+  "license": "GPL-3.0-only",
   "author": "Edenware",
   "description": "Shield your sensitive Windows from snooping eyes",
   "scripts": {
