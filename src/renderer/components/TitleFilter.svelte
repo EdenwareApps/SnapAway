@@ -263,7 +263,6 @@
         </div>
       {/if}
     </div>
-    <br />
 </div>
 
 <style>
@@ -352,6 +351,7 @@
 
   .no-filters {
     text-align: center;
+    min-height: 2em;
   }
 
   .no-filters span {
@@ -396,8 +396,9 @@
   }
 
   #protect-key {    
-    border-radius: 9px;
+    border-radius: 6px;
     padding: 3px 11px;
+    height: 3rem;
     cursor: pointer;
     font-size: inherit;
     font-family: inherit;

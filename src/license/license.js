@@ -9,30 +9,34 @@ const superagent = require('superagent');
 // The public key is hardcoded here (as provided by the server) for client-side validation.
 // This eliminates the need to fetch the public key at runtime.
 const PUBLIC_KEY = process.env.SNAPAWAY_PUBLIC_KEY || `-----BEGIN PUBLIC KEY-----
-MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA2XYCNVOywji0qkJPVufk
-uSMLNOEPwYyPr2mIGAZ5WXnnO7xUqLPxSjigmN8RnfAW5t3rvKK3XnYEqmgIWClW
-c5nK5zXoAoBPpAp7KXTJ80Y6/9/2pMOIMjVgPQbgnYKRfj61/hYFoBbOahIuA2l5
-lBWOSoP3qJts1DFPw4chDAHWCuoV+ZWEP3EL9QCVLfvcCEm6WCti3dBasGTVOeMo
-z8OphI+qVax9NA+XQ2jYNPsSnCvSuUWKkQ1eqYj6uJc29bg8LsESbBJRD2eMLkR/
-RmYVDrJ6QH1cEJWZ5YL74vZk4YcaZt8wWopUjY5Hq0EJ3+lmnaUFKz1VklE8ZjoY
-DQIDAQAB
+MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA2Mqt6ttq2/QJF/1o/G4d
+ogIzp1XjM90y/FI9REuUb0x6B2NySTKSvP0D+K/BN8nnbJxnES+sUPlJK1Kx9pt6
+OdJ72RLdzupvWFgT23ZyCOA0ut0ioJ2N6bSxA8GKEJGfyZxPnUPTn2O27z2KtlLq
+nt1LRmeN7YtOFDmiKDJTkblgEWOINtFwMFlxxRCOqMb1Wqhg3xTBvF6sZU3huCvq
+WPZfqrrWnLMJ4yvQH1o+MGlGeRvwON66QrubkWwBWz6Xs2xVMhPSjN0dGb45SHJJ
+MfoYYMIo5T4DsFScNuWtNRRvFZkDMtUj4ZTucTIswozMvuy/DQLzHWLGBZCFD/zl
+awIDAQAB
 -----END PUBLIC KEY-----\n`;
 
 function isPublicKeyPlaceholder(key) {
     return !key || key.includes('REPLACE_WITH_REAL_PUBLIC_KEY');
 }
 
-// Legacy HMAC secret (used only for very old license formats).
-// New licenses should always be verified with the public key. HMAC fallback is not used.
-const LICENSE_SIGNING_SECRET = process.env.LICENSE_SECRET_KEY || process.env.SNAPAWAY_LICENSE_SECRET || 'replace-this-with-your-secret';
+// Salt used for the legacy offline license hash and validation-key derivation.
+// DO NOT change this value: it would invalidate the hashes stored in existing
+// license files. Kept as a named constant (instead of inline literals) so it
+// can be audited; if ever rotated, it must be rotated together with a data
+// migration of already-issued licenses.
+const LICENSE_HASH_SALT = 'SnapAway2024Edenware';
 
 
 class LicenseManager {
     constructor() {
         this.licensePath = path.join(os.homedir(), '.snapaway', 'license.json');
-        this.validLicenseKey = 'SNAPAWAY-Pro-2024-EDENWARE';
         this.freeAppLimit = 2;
-        this.licenseServer = 'https://hub.edenware.app';
+        // Microsoft Store purchase (IAP) grants Pro without a license file.
+        this.storePro = false;
+        this.licenseServer = 'https://edenware.app/hub';
         this.appId = 'snapaway';
         this.enableOnlineVerification = true; // Pode ser desabilitado para modo offline
         this.ProFeatures = {
@@ -72,7 +76,7 @@ class LicenseManager {
         const machineId = this.getMachineId();
         const appVersion = '1.0.0'; // Can be read from package.json if needed
         return crypto.createHash('sha256')
-            .update(machineId + appVersion + 'SnapAway2024Edenware')
+            .update(machineId + appVersion + LICENSE_HASH_SALT)
             .digest('hex').substring(0, 16);
     }
     
@@ -100,9 +104,8 @@ class LicenseManager {
 
     // Generate license hash for verification
     generateLicenseHash(licenseKey) {
-        const salt = 'SnapAway2024Edenware';
         return crypto.createHash('sha256')
-            .update(licenseKey + salt)
+            .update(licenseKey + LICENSE_HASH_SALT)
             .digest('hex');
     }
 
@@ -537,8 +540,17 @@ class LicenseManager {
         return sanitized;
     }
 
+    // Track a Microsoft Store purchase (IAP). Store purchases grant Pro
+    // without a license file, so the license manager must treat them as Pro.
+    setStorePro(value) {
+        this.storePro = !!value;
+    }
+
     // Check if user has Pro access - CRITICAL: Only accept licenses when signature verification passes.
     isPro() {
+        // A Microsoft Store purchase (IAP) grants Pro without a license file.
+        if (this.storePro) return true;
+
         const license = this.loadLicense();
         if (!license) return false;
 
@@ -627,13 +639,13 @@ class LicenseManager {
         const isPro = this.isPro();
         const license = this.loadLicense();
         
-        if (isPro && license) {
+        if (isPro && (license || this.storePro)) {
             return {
                 isPro: true,
-                activated: license.activated,
+                activated: license ? license.activated : null,
                 features: this.ProFeatures,
                 appLimit: Infinity,
-                machineId: license.machineId
+                machineId: license ? license.machineId : this.getMachineId()
             };
         } else {
             return {

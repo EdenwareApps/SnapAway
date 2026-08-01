@@ -28,14 +28,16 @@ try {
     const manifest = fs.readFileSync(manifestPath, 'utf8');
     
     // Check basic XML structure
+    // NOTE: AppxManifest.xml é um template com placeholders (ex.: ${executableName})
+    // que o electron-builder preenche durante o build, então validamos o template.
     if (!manifest.includes('<?xml') || !manifest.includes('</Package>')) {
       console.log('   ❌ FAILED: Invalid XML structure');
       TESTS.push({ name: 'AppxManifest validation', status: 'FAILED' });
-    } else if (!manifest.includes('Executable="app\\SnapAway.exe"')) {
-      console.log('   ❌ FAILED: Missing Executable attribute');
+    } else if (!manifest.includes('Executable="app\\${executableName}.exe"')) {
+      console.log('   ❌ FAILED: Missing Executable attribute (template placeholder)');
       TESTS.push({ name: 'AppxManifest validation', status: 'FAILED' });
-    } else if (!manifest.includes('EntryPoint="Windows.DesktopApp"')) {
-      console.log('   ❌ FAILED: Missing Windows.DesktopApp EntryPoint');
+    } else if (!manifest.includes('EntryPoint="Windows.FullTrustApplication"')) {
+      console.log('   ❌ FAILED: Missing Windows.FullTrustApplication EntryPoint');
       TESTS.push({ name: 'AppxManifest validation', status: 'FAILED' });
     } else if (!manifest.includes('runFullTrust')) {
       console.log('   ❌ FAILED: Missing runFullTrust capability');
@@ -61,7 +63,8 @@ try {
     console.log('   ❌ FAILED: Missing build.appx configuration');
     valid = false;
   }
-  if (!pkg.build?.appId || !pkg.build.appId.includes('snapaway')) {
+  // appId real do projeto: Edenware.app.Snapcover (aceita snapaway/snapcover, case-insensitive)
+  if (!pkg.build?.appId || !/snapaway|snapcover/i.test(pkg.build.appId)) {
     console.log('   ❌ FAILED: Invalid appId');
     valid = false;
   }

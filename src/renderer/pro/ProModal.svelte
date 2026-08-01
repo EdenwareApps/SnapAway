@@ -19,7 +19,6 @@
   let storeProductInfo = null;
   let isPriceLoading = true;
   let iapAvailable = false;
-  let iapDiagnostics = null;
   let premiumCapabilities = null;
   let isStoreInstall = false;
   let isPackaged = true;
@@ -36,13 +35,6 @@
       return null;
     }
     return capabilities.billing.available === true;
-  }
-
-  function getBillingReason(capabilities) {
-    if (!capabilities || !capabilities.billing) {
-      return null;
-    }
-    return capabilities.billing.reason || null;
   }
 
   function loadCachedStorePrice() {
@@ -147,7 +139,6 @@
         isStoreInstall = !!status?.isStoreInstall;
         console.log('[ProModal] getIapStatus result', status, 'isPackaged', isPackaged, 'isStoreInstall', isStoreInstall);
         iapAvailable = !!status?.available;
-        iapDiagnostics = status?.diagnostics || null;
         premiumCapabilities = status?.premiumCapabilities || null;
 
         // Keep purchase UX resilient: if billing capability says unavailable,
@@ -413,17 +404,6 @@
       {/if}
       
       {#if !showLicenseInput}
-        {#if !iapAvailable && !isPriceLoading}
-          <div class="iap-warning">
-            <strong>{lang.STORE_IAP_UNAVAILABLE || 'Microsoft Store purchase API is unavailable.'}</strong>
-            {#if iapDiagnostics?.error}
-              <p>{lang.IAP_DIAGNOSTIC_ERROR || 'Diagnostic:'} {iapDiagnostics.error}</p>
-            {/if}
-            {#if getBillingReason(premiumCapabilities)}
-              <p>{lang.IAP_DIAGNOSTIC_ERROR || 'Diagnostic:'} {getBillingReason(premiumCapabilities)}</p>
-            {/if}
-          </div>
-        {/if}
         <div class="pricing">
           <h3>💰 {storeProductInfo?.title || lang.LIFETIME_UNLOCK || lang.LIFETIME_LICENSE || 'Lifetime Unlock'}</h3>
           <div class="price">{displayStorePrice}</div>
@@ -642,19 +622,6 @@
     margin: 0 0 8px 0;
     color: #22543d;
   }
-  .iap-warning {
-    background: #fef3c7;
-    border: 1px solid #f59e0b;
-    border-radius: 8px;
-    padding: 12px;
-    margin-bottom: 18px;
-    color: #92400e;
-  }
-  .iap-warning p {
-    margin: 8px 0 0;
-    color: #92400e;
-  }
-  
   .limit-info p {
     margin: 0;
     color: #22543d;

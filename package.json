@@ -1,7 +1,7 @@
 {
   "name": "snapaway",
   "productName": "SnapAway",
-  "version": "1.0.9",
+  "version": "1.1.1",
   "main": "out/main/index.js",
   "license": "GPL-3.0-only",
   "author": "Edenware",
@@ -49,6 +49,7 @@
     "diag:electron:versions": "node scripts/electron-versions-check.js",
     "diag:audio:electron:direct": "node scripts/test-audio-electron-direct.js",
     "diag:minimal:electron": "npx electron scripts/native-host-smoke-minimal.js",
+    "diag:titlebar:screenshot": "npx electron scripts/titlebar-screenshot-isolated-test.js",
     "diag:minimal:electron-node": "set \"ELECTRON_RUN_AS_NODE=1\" && npx electron scripts/native-host-smoke-minimal.js",
     "start": "electron-vite dev",
     "publish": "npm run rebuild:native && npm run prepare:appx-assets && npm run build && electron-builder --publish",

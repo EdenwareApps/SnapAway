@@ -1296,7 +1296,7 @@ packages:
       picomatch: 2.3.1
     dev: true
 
-  /argparse@1.0.10:
+  /argparse@1.1.0:
     resolution: {integrity: sha512-o5Roy6tNG4SL/FOkCAN6RzjiakZS25RLYFrcMttJqbdd8BWrnA+fGz57iN5Pb06pvBGvl5gQ0B48dJlslXvoTg==}
     dependencies:
       sprintf-js: 1.0.3
@@ -3680,7 +3680,7 @@ packages:
     resolution: {integrity: sha512-okMH7OXXJ7YrN9Ok3/SXrnu4iX9yOk+25nqX4imS2npuvTYDmo/QEZoqwZkYaIDk3jVvBOTOIEgEhaLOynBS9g==}
     hasBin: true
     dependencies:
-      argparse: 1.0.10
+      argparse: 1.1.0
       esprima: 4.0.1
     dev: true
 

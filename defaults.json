@@ -8,5 +8,6 @@
     "aboutUrl": "https://edenware.app/snapaway",
     "updateUrl": "https://edenware.app/snapaway/update.json",
     "revealHintShownCount": 0,
-    "revealHintDismissedForever": false
+    "revealHintDismissedForever": false,
+    "showTitlebarOverlay": true
   }

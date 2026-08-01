@@ -3,6 +3,7 @@ import { createEventDispatcher, onMount } from 'svelte';
 
   let startupTaskState = null; // WinRT state for MSIX installs
   let isStoreInstallLocal = false;
+  let startupErrorMessage = ''; // Mensagem de erro amigável
   onMount(async () => {
     if (window.api && window.api.getStartupState) {
       try {
@@ -96,7 +97,7 @@ import { createEventDispatcher, onMount } from 'svelte';
       if (e.altKey) mods.push('Alt');
       if (e.shiftKey) mods.push('Shift');
       const live = mods.join('+');
-      const recordingLabel = (lang && lang.RECORDING) || 'Set your SnapKey...';
+      const recordingLabel = (lang && lang.RECORDING) || 'Set your shortcut...';
       if (activeInput === 'hide') displayHide = live || recordingLabel;
       else displayShow = live || recordingLabel;
       return;
@@ -515,7 +516,6 @@ import { createEventDispatcher, onMount } from 'svelte';
         <option value="small" selected={config.fontSize === 'small'}>{lang.FONT_SIZE_SMALL || 'Small'}</option>
         <option value="medium" selected={config.fontSize === 'medium'}>{lang.FONT_SIZE_MEDIUM || 'Medium'}</option>
         <option value="large" selected={config.fontSize === 'large'}>{lang.FONT_SIZE_LARGE || 'Large'}</option>
-        <option value="xlarge" selected={config.fontSize === 'xlarge'}>{lang.FONT_SIZE_XLARGE || 'Extra Large'}</option>
       </select>
     </div>
     <div class="shortcut-container">
@@ -550,6 +550,19 @@ import { createEventDispatcher, onMount } from 'svelte';
       </select>
     </div>
     <div class="shortcut-container">
+      <label for="show-titlebar-overlay">{lang.SHOW_TITLEBAR_OVERLAY || 'Show overlay icon on window titlebars'}:</label>
+      <input
+        id="show-titlebar-overlay"
+        name="show-titlebar-overlay"
+        type="checkbox"
+        checked={config.showTitlebarOverlay !== false}
+        on:change={(e) => {
+          config.showTitlebarOverlay = e.target.checked;
+          dispatch('change');
+        }}
+      />
+    </div>
+    <div class="shortcut-container">
       <label for="show-reveal-hints">{lang.SHOW_REVEAL_HINTS || 'Show reveal hints'}:</label>
       <input
         id="show-reveal-hints"
@@ -571,15 +584,27 @@ import { createEventDispatcher, onMount } from 'svelte';
       checked={config.startup}
       disabled={startupTaskState === 'DisabledByUser' || startupTaskState === 'DisabledByPolicy'}
       on:change={async (e) => {
-        config.startup = e.target.checked;
-        if (isStoreInstallLocal && window.api && window.api.setStartup) {
-          const result = await window.api.setStartup(e.target.checked);
-          if (result && result.startupTaskState) {
-            startupTaskState = result.startupTaskState;
-            config.startup = result.startupTaskState === 'Enabled' || result.startupTaskState === 'EnabledByPolicy';
-          }
-        } else {
+        if (!window.api || !window.api.setStartup) {
           dispatch('change');
+          return;
+        }
+        startupErrorMessage = '';
+        const checked = e.target.checked;
+        const result = await window.api.setStartup(checked);
+        if (result && result.success) {
+          config.startup = result.startupTaskState
+            ? (result.startupTaskState === 'Enabled' || result.startupTaskState === 'EnabledByPolicy')
+            : checked;
+          if (result.startupTaskState) {
+            startupTaskState = result.startupTaskState;
+          }
+          dispatch('change');
+        } else {
+          // Reverte o checkbox se falhou
+          config.startup = !checked;
+          startupErrorMessage = result?.message
+            ? result.message
+            : (lang.STARTUP_SETUP_FAILED || 'Could not enable startup automatically.');
         }
       }}
       />
@@ -591,6 +616,13 @@ import { createEventDispatcher, onMount } from 'svelte';
         <button class="link-button" on:click={() => window.api && window.api.launchUrl && window.api.launchUrl('ms-settings:startupapps')}>
           {lang.OPEN_STARTUP_SETTINGS || 'Open Startup Settings'}
         </button>
+      </span>
+    </div>
+    {/if}
+    {#if startupErrorMessage}
+    <div class="shortcut-container startup-error-notice">
+      <span style="font-size:0.85em; opacity:0.75; color:var(--warning-color, #e8a838);">
+        {startupErrorMessage}
       </span>
     </div>
     {/if}
@@ -631,16 +663,15 @@ import { createEventDispatcher, onMount } from 'svelte';
       name="run-high-priority" 
       type="checkbox" 
       checked={config.runHighPriority} 
-      disabled={!isPro}
       on:change={(e) => {
         if (!isPro) {
+          e.target.checked = !e.target.checked; // reverte o toggle visual
           showProModalFeature('runHighPriority', lang.RUN_HIGH_PRIORITY || 'Run high priority');
           return;
         }
         config.runHighPriority = e.target.checked;
         dispatch('change');
       }}
-      on:click={() => { if (!isPro) showProModalFeature('runHighPriority', lang.RUN_HIGH_PRIORITY || 'Run high priority'); }}
       />
       {#if !isPro}
         <span class="pro-indicator" on:click={() => showProModalFeature('runHighPriority', lang.RUN_HIGH_PRIORITY || 'Run high priority')} on:keydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); showProModalFeature('runHighPriority', lang.RUN_HIGH_PRIORITY || 'Run high priority'); } }} role="button" tabindex="0" title={lang.PRO_FEATURE}><i class="fas fa-star" aria-hidden="true"></i>&nbsp;{lang.PRO_FEATURE}</span>
@@ -653,16 +684,16 @@ import { createEventDispatcher, onMount } from 'svelte';
       name="mute-windows" 
       type="checkbox" 
       checked={config.muteWindows} 
-      disabled={!visible || !isPro}
+      disabled={!visible}
       on:change={(e) => {
         if (!isPro) {
+          e.target.checked = !e.target.checked; // reverte o toggle visual
           showProModalFeature('muteWindows', lang.MUTE_WINDOWS || 'Mute windows when hidden');
           return;
         }
         config.muteWindows = e.target.checked;
         dispatch('change');
       }}
-      on:click={() => { if (!isPro) showProModalFeature('muteWindows', lang.MUTE_WINDOWS || 'Mute windows when hidden'); }}
       />
       {#if !isPro}
         <span class="pro-indicator" on:click={() => showProModalFeature('muteWindows', lang.MUTE_WINDOWS || 'Mute windows when hidden')} on:keydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); showProModalFeature('muteWindows', lang.MUTE_WINDOWS || 'Mute windows when hidden'); } }} role="button" tabindex="0" title={lang.PRO_FEATURE}><i class="fas fa-star" aria-hidden="true"></i>&nbsp;{lang.PRO_FEATURE}</span>
@@ -675,17 +706,15 @@ import { createEventDispatcher, onMount } from 'svelte';
         name="cloak-enabled"
         type="checkbox"
         checked={config.cloakEnabled || false}
-        disabled={!isPro}
         on:change={(e) => {
           if (!isPro) {
+            e.target.checked = !e.target.checked; // reverte o toggle visual
             showProModalFeature('cloaking', lang.CLOAKING_LABEL || 'Cloaking');
-            e.target.checked = false;
             return;
           }
           config.cloakEnabled = e.target.checked;
           handleCloakToggle();
         }}
-        on:click={() => { if (!isPro) showProModalFeature('cloaking', lang.CLOAKING_LABEL || 'Cloaking'); }}
       />
       <span class="setting-description">{lang.CLOAKING_DESC || 'Hide app identity with custom name and icon'}</span>
       {#if !isPro}
@@ -764,11 +793,12 @@ import { createEventDispatcher, onMount } from 'svelte';
     border-bottom: 1px solid rgba(0, 0, 0, 0.1);
     display: flex;
     padding: 1vmin;
+    min-height: 2em;
     align-items: center;
     color: var(--main-font-color);
   }
   .shortcut-container label {
-    min-width: 30vw;
+    min-width: 38vw;
   }
   .setting-description {
     font-size: 0.85rem;

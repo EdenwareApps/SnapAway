@@ -10,6 +10,9 @@
 
   let viewFilterCaseSensitive = true;
   let viewFilterFocused = false;
+  // When false, the filter box is hidden and two icons (search/add) are shown;
+  // clicking one opens the box. Resets when navigating to options or hiding.
+  let viewFilterOpen = false;
   let lang = {}
   // Initialize state from body class if already present (helps avoid initial flicker when body is pre-styled)
   let currentState = (typeof document !== 'undefined' && document.body.classList.contains('hide-state')) ? 'hide' : 'show';
@@ -144,6 +147,25 @@
     if (processes && processes.length > 0) {
       console.log('First process HWND:', processes[0].hwnd);
       console.log('First process has HWND property:', 'hwnd' in processes[0]);
+    }
+
+    // Enrich filters that are missing icons (e.g. added via overlay before icons were extracted)
+    if (config && Array.isArray(config.filters) && processes && processes.length > 0) {
+      let changed = false;
+      config.filters.forEach(filter => {
+        if (filter.icon) return;
+        const match = processes.find(p =>
+          (filter.hwnd && p.hwnd == filter.hwnd) ||
+          (filter.executable && p.executable && filter.executable.toLowerCase() === p.executable.toLowerCase())
+        );
+        if (match && match.icon) {
+          filter.icon = match.icon;
+          if (!filter.executable && match.executable) filter.executable = match.executable;
+          if (!filter.process && match.process) filter.process = match.process;
+          changed = true;
+        }
+      });
+      if (changed) config.filters = config.filters;
     }
     
     // Check for new processes that match filters during hide-state
@@ -600,6 +622,8 @@
 
   function toggleContainer(container) {
     currentContainer = container;
+    // Reset the collapsed filter box whenever navigating (e.g. going to options)
+    viewFilterOpen = false;
     const icon = document.querySelector('.cet-icon-options');
     if (container === 'options') {
       icon.innerHTML = '<i class="fas fa-chevron-left"></i><span>'+ lang.BACK +'</span>';
@@ -649,9 +673,29 @@
     window.api.onStateChange((_, state) => {
       console.log('[App.svelte] State changed from', currentState, 'to', state);
       currentState = state || 'show';
+      // Reset the collapsed filter box when the window is hidden
+      if (state === 'hide') {
+        viewFilterOpen = false;
+      }
       syncBodyState(currentState);
     });
   }
+
+  // Reset the collapsed filter box whenever the window enters float-mode or the
+  // hide-state (body classes are managed by inline scripts in index.html, so a
+  // MutationObserver catches all paths regardless of which code toggled them).
+  function watchBodyModeForFilterReset() {
+    const body = document.body;
+    if (!body) return;
+    const observer = new MutationObserver(() => {
+      if (body.classList.contains('float-mode') || body.classList.contains('hide-state')) {
+        viewFilterOpen = false;
+      }
+    });
+    observer.observe(body, { attributes: true, attributeFilter: ['class'] });
+    return observer;
+  }
+  const bodyModeObserver = watchBodyModeForFilterReset();
 
   // Set up API event listeners
   let apiRetryCount = 0;
@@ -731,6 +775,27 @@
       window.api.onConfigChange((_, c) => {
         config = c;
         window.config = c;
+
+        // Enrich filters that arrived without an icon (e.g. added via the
+        // titlebar overlay) using the current process list, when a match exists.
+        if (c && Array.isArray(c.filters) && processes && processes.length > 0) {
+          let changed = false;
+          c.filters.forEach(filter => {
+            if (filter.icon) return;
+            const match = processes.find(p =>
+              (filter.hwnd && p.hwnd == filter.hwnd) ||
+              (filter.executable && p.executable && filter.executable.toLowerCase() === p.executable.toLowerCase())
+            );
+            if (match && match.icon) {
+              filter.icon = match.icon;
+              if (!filter.executable && match.executable) filter.executable = match.executable;
+              if (!filter.process && match.process) filter.process = match.process;
+              changed = true;
+            }
+          });
+          if (changed) config = c;
+        }
+
         ensureThemeSync();
 
         const localFirstRun = (() => {
@@ -972,15 +1037,26 @@
           <button title={lang.REFRESH} aria-label={lang.REFRESH} class="header-item" id="refresh-button" on:click={refreshProcesses} on:keydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); refreshProcesses(); } }}>
             <i class="fas fa-sync-alt" aria-hidden="true"></i>
           </button>
-          <span class="view-filter-box">
-            <input type="search" placeholder={lang.FILTER} bind:value={viewFilter} on:focus={() => viewFilterFocused = true} on:blur={() => viewFilterFocused = false} />
-            <button id="font-case-button" class:sensitive={viewFilterCaseSensitive} title={lang.FONT_CASE} aria-label={lang.FONT_CASE} on:click={() => viewFilterCaseSensitive = !viewFilterCaseSensitive}>
-              <i class="fas fa-font-case" aria-hidden="true"></i>
-            </button>
-            <button id="add-filter-button" title={lang.ADD_FILTER} aria-label={lang.ADD_FILTER} on:click={() => addViewFilter(viewFilter)} style="border-radius: 0;line-height: 138%;">
-              <i class="fas fa-plus" aria-hidden="true"></i>
-            </button>
-          </span>
+          {#if viewFilterOpen}
+            <span class="view-filter-box">
+              <input type="search" placeholder={lang.FILTER} bind:value={viewFilter} on:focus={() => viewFilterFocused = true} on:blur={() => viewFilterFocused = false} />
+              <button id="font-case-button" class:sensitive={viewFilterCaseSensitive} title={lang.FONT_CASE} aria-label={lang.FONT_CASE} on:click={() => viewFilterCaseSensitive = !viewFilterCaseSensitive}>
+                <i class="fas fa-font-case" aria-hidden="true"></i>
+              </button>
+              <button id="add-filter-button" title={lang.ADD_FILTER} aria-label={lang.ADD_FILTER} on:click={() => addViewFilter(viewFilter)} style="border-radius: 0;line-height: 138%;">
+                <i class="fas fa-plus" aria-hidden="true"></i>
+              </button>
+            </span>
+          {:else}
+            <span class="view-filter-box view-filter-icons">
+              <button id="view-filter-search-button" title={lang.FILTER} aria-label={lang.FILTER} on:click={() => { viewFilterOpen = true; setTimeout(() => { const el = document.querySelector('.view-filter-box input'); if (el) el.focus(); }, 0); }}>
+                <i class="fas fa-search" aria-hidden="true"></i>
+              </button>
+              <button id="view-filter-add-button" title={lang.ADD_FILTER} aria-label={lang.ADD_FILTER} on:click={() => { viewFilterOpen = true; }}>
+                <i class="fas fa-plus" aria-hidden="true"></i>
+              </button>
+            </span>
+          {/if}
         </span>
       </header>
       <div class="content" role="region" aria-label="Application content area" on:dragover={(e) => e.preventDefault()} on:drop={(e) => handleDrop(e, 'content')}>
@@ -1067,7 +1143,7 @@
     font-weight: bolder;
     border-width: 0;
     background: transparent;
-    margin: 0 1.5em 0 -0.5em;
+    margin: 2px 0.75em 0 -0.5em;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -1197,6 +1273,24 @@
     display: flex;
     flex-direction: row;
     overflow: hidden;
+  }
+  .view-filter-box.view-filter-icons {
+    background: transparent;
+    box-shadow: none;
+  }
+  .view-filter-box.view-filter-icons button {
+    border-width: 0;
+    background: transparent;
+    padding: 4px 10px;
+    cursor: pointer;
+    font-size: inherit;
+    font-family: inherit;
+  }
+  .view-filter-box.view-filter-icons button:hover,
+  .view-filter-box.view-filter-icons button:focus {
+    background: transparent;
+    box-shadow: none;
+    border-radius: 0;
   }
   #filter-selector {
     display: inline-flex;

@@ -15,11 +15,10 @@
         /* Theme support - default to system */
         color-scheme: light dark;
         
-        /* Font size variables */
-        --font-size-small: 11px;
-        --font-size-medium: 12px;
-        --font-size-large: 14px;
-        --font-size-xlarge: 16px;
+        /* Font size variables - Windows standard base is 13px */
+        --font-size-small: 13px;
+        --font-size-medium: 14px;
+        --font-size-large: 16px;
         
         /* Border radius variables - individual corners for snap-to-edges */
         --border-radius-top-left: 9px;
@@ -116,10 +115,7 @@
       .cet-container #outer-container {
         width: 100%;
         height: 100%;
-        border-top-left-radius: var(--border-radius-top-left);
-        border-top-right-radius: var(--border-radius-top-right);
-        border-bottom-left-radius: var(--border-radius-bottom-left);
-        border-bottom-right-radius: var(--border-radius-bottom-right);
+        border-radius: 0;
         overflow: hidden;
         position: relative;
         z-index: 1;
@@ -238,7 +234,14 @@
         user-select: text;
       }
       h2 {
-        font-size: 1.25rem;
+        font-size: inherit;
+        font-weight: 700;
+        align-items: center;
+      }
+
+      header {
+        margin-top: 1rem;
+        display: flex;
       }
 
       .cet-window-icon {
@@ -246,7 +249,7 @@
       }
 
       .cet-window-title {
-        font-size: 1rem !important;
+        font-size: inherit;
         letter-spacing: 0.4px;
         font-weight: 500;
         text-shadow: inherit;
@@ -273,7 +276,7 @@
         align-items: center;
         height: 30px;
         color: ButtonText;
-        font-size: 12px;
+        font-size: var(--font-size-medium);
         user-select: none;
         -webkit-app-region: drag;
         position: relative;
@@ -342,6 +345,7 @@
         text-align: center;
         font-weight: 500;
         color: ButtonText;
+        font-size: inherit;
         pointer-events: auto;
         position: relative;
         z-index: 1;
@@ -491,9 +495,16 @@
         font-size: var(--font-size-large);
       }
       
-      body.font-size-xlarge {
-        font-size: var(--font-size-xlarge);
-      }
+      /* Titlebar (título + botão Opções/Voltar) segue o tamanho de fonte definido */
+      body.font-size-small .cet-titlebar,
+      body.font-size-small .cet-title,
+      body.font-size-small .cet-window-title { font-size: var(--font-size-small); }
+      body.font-size-medium .cet-titlebar,
+      body.font-size-medium .cet-title,
+      body.font-size-medium .cet-window-title { font-size: var(--font-size-medium); }
+      body.font-size-large .cet-titlebar,
+      body.font-size-large .cet-title,
+      body.font-size-large .cet-window-title { font-size: var(--font-size-large); }
 
       #floating-button:active {
         transform: scale(0.9);
@@ -700,7 +711,7 @@
         background: ButtonFace url(/assets/images/default-icon.png) no-repeat;
         background-size: contain;
         background-position-x: 6px;
-        padding-left: 35px !important;
+        padding-left: 3.4em !important;
         color: ButtonText !important;
         box-shadow: 0 0 1px ButtonBorder;
       }
@@ -1772,7 +1783,9 @@
       
       // Function to update font size based on config
       function updateFontSize() {
-        const fontSize = window.config?.fontSize || 'medium';
+        let fontSize = window.config?.fontSize || 'medium';
+        // 'xlarge' foi removido das opções; normaliza para 'large' se ainda estiver salvo
+        if (fontSize === 'xlarge') fontSize = 'large';
         // Remove all font size classes
         document.body.classList.remove('font-size-small', 'font-size-medium', 'font-size-large', 'font-size-xlarge');
         // Add the current font size class

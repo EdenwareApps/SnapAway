@@ -15,6 +15,7 @@ app.commandLine.appendSwitch('high-dpi-support', '1');
 
 const gpuPolicy = require('./gpu-policy');
 const telemetry = require('./telemetry');
+const { createOverlayManager } = require('./overlay-manager')
 const gpuPolicyFlags = gpuPolicy.applyGpuPolicy(app);
 
 if (process.platform === 'win32' && koffi) {
@@ -100,7 +101,7 @@ ipcMain.on('auth-check-response', (event, result) => {
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
-const { execFile } = require('child_process');
+const { execFile, spawn } = require('child_process');
 const superagent = require('superagent');
 
 if (process.platform === 'win32') {
@@ -191,9 +192,17 @@ async function runWinRTStartupTask(action) {
     } else { return null; }
     const script = header + '; ' + body;
     return new Promise((resolve) => {
-        execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], { timeout: 12000 }, (err, stdout) => {
-            if (err) { console.warn('[MAIN] WinRT StartupTask (' + action + ') failed:', err.message || err); resolve(null); return; }
-            resolve(stdout.trim() || null);
+        execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], { timeout: 15000, maxBuffer: 1024 * 1024 }, (err, stdout, stderr) => {
+            if (err) {
+                console.warn('[MAIN] WinRT StartupTask (' + action + ') failed:', err.message || err, '| stderr:', (stderr || '').trim().slice(0, 500));
+                resolve(null);
+                return;
+            }
+            const result = stdout.trim();
+            if (!result && stderr && stderr.trim()) {
+                console.warn('[MAIN] WinRT StartupTask (' + action + ') returned empty stdout but stderr:', stderr.trim().slice(0, 500));
+            }
+            resolve(result || null);
         });
     });
 }
@@ -207,13 +216,17 @@ async function syncStartupPreferenceOnBoot() {
         }
 
         const shouldEnable = !!config.startup;
-        const enabled = await autoLaunch.isEnabled();
-        if (shouldEnable && !enabled) {
-            await autoLaunch.enable();
-            console.log('[MAIN] Boot sync: enabled autoLaunch for EXE install');
-        } else if (!shouldEnable && enabled) {
-            await autoLaunch.disable();
-            console.log('[MAIN] Boot sync: disabled autoLaunch for EXE install');
+        try {
+            const enabled = isLoginItemEnabled();
+            if (shouldEnable && !enabled) {
+                setLoginItemEnabled(true);
+                console.log('[MAIN] Boot sync: enabled startup for EXE install');
+            } else if (!shouldEnable && enabled) {
+                setLoginItemEnabled(false);
+                console.log('[MAIN] Boot sync: disabled startup for EXE install');
+            }
+        } catch (e) {
+            console.warn('[MAIN] Boot sync startup failed:', e.message);
         }
     } catch (error) {
         console.warn('[MAIN] Boot sync for startup preference failed:', error && error.message ? error.message : error);
@@ -280,6 +293,8 @@ function getHelperCandidates() {
     }
     candidates.push(path.join(process.cwd(), 'dist', 'SnapAwayHelper.exe'));
     candidates.push(path.join(process.cwd(), 'SnapAwayHelper.exe'));
+    // Dev: the helper is built into src/helper/ by build-helper.ps1
+    candidates.push(path.join(process.cwd(), 'src', 'helper', 'SnapAwayHelper.exe'));
     return candidates;
 }
 
@@ -303,6 +318,23 @@ async function askForElevation(actionTitle, details) {
     return response.response === 1;
 }
 
+// The native helper (SnapAwayHelper.exe) parses HWNDs with strtoull(..., 10),
+// i.e. base 10. The overlay tracker produces hex strings ("0x20662"), while the
+// renderer uses decimal strings. Normalize to decimal so the helper can resolve
+// the window regardless of source.
+function hwndToDecimalString(hwndStr) {
+    if (!hwndStr) return hwndStr
+    const s = String(hwndStr).trim()
+    if (/^0x/i.test(s)) {
+        try {
+            return BigInt(s).toString(10)
+        } catch (_) {
+            return s
+        }
+    }
+    return s
+}
+
 async function runElevatedAction(action, params = {}) {
     const helperPath = resolveHelperPath();
     if (!helperPath) {
@@ -313,7 +345,13 @@ async function runElevatedAction(action, params = {}) {
         };
     }
 
-    const payload = Buffer.from(JSON.stringify({ action, ...params }), 'utf8').toString('base64');
+    // Normalize hwnd to decimal for the helper (only relevant for window actions).
+    const safeParams = { ...params };
+    if (safeParams.hwnd) {
+        safeParams.hwnd = hwndToDecimalString(safeParams.hwnd);
+    }
+
+    const payload = Buffer.from(JSON.stringify({ action, ...safeParams }), 'utf8').toString('base64');
     const resultFile = path.join(os.tmpdir(), `snapaway-helper-${Date.now()}-${Math.random().toString(16).slice(2)}.json`);
     const args = ['--payloadBase64', payload, '--resultFile', resultFile];
 
@@ -379,6 +417,15 @@ async function setStartupWithElevation(enable) {
         args: '--autostart',
         name: 'SnapAway'
     });
+}
+
+function getAutostartArgs(enable) {
+    return {
+        enable: enable ? 'true' : 'false',
+        exePath: process.execPath,
+        args: '--autostart',
+        name: 'SnapAway'
+    };
 }
 
 function shouldShowFloatingButton() {
@@ -580,7 +627,6 @@ function detectAndSetLanguage() {
 // detectAndSetLanguage is now triggered after app.whenReady(),
 // because app.getSystemLocale() requires the app to be ready.
 const manifest = require('../../package.json');
-const AutoLaunch = require('auto-launch');
 const crypto = require('crypto');
 
 let tray = null;
@@ -629,6 +675,8 @@ async function refreshStoreProEntitlement(reason = 'unknown', timeoutMs = 5000) 
         const storeLicenseInfo = await iapModule.getLicenseInfo();
         const isStorePro = !!(storeLicenseInfo && storeLicenseInfo.isPro === true);
         lastKnownStorePro = isStorePro;
+        // Keep the license manager in sync so feature/limit checks honor the Store purchase.
+        licenseManager.setStorePro(isStorePro);
 
         if (isStorePro) {
             config.isPro = true;
@@ -665,6 +713,8 @@ function enforceProCheck() {
         const licenseInfo = licenseManager.getLicenseInfo();
         const wasPro = config.isPro;
         const effectiveStorePro = lastKnownStorePro;
+        // Keep the license manager in sync so feature/limit checks honor the Store purchase.
+        licenseManager.setStorePro(effectiveStorePro);
         config.isPro = licenseInfo.isPro || effectiveStorePro;
 
         // If Pro status changed, update immediately
@@ -719,6 +769,7 @@ let mainWindowSize = { width: 640, height: 550 }; // Tamanho padrão da janela p
 let mainWindowPosition = { x: 100, y: 100 }; // Posição padrão da janela principal // Rastreia o estado anterior da janela
 let authWindowSize = null; // Tamanho da janela antes da autenticação
 let authWindowPosition = null; // Posição da janela antes da autenticação
+let titlebarOverlayManager = null
 
 // Helper para atualizar tamanho/posição principais com validações básicas
 function setMainWindowBounds(size = {}, position = {}, { applyToWindow = true, save = true } = {}) {
@@ -743,15 +794,12 @@ function setMainWindowBounds(size = {}, position = {}, { applyToWindow = true, s
         const xCandidate = (typeof position.x === 'number') ? position.x : mainWindowPosition.x;
         const yCandidate = (typeof position.y === 'number') ? position.y : mainWindowPosition.y;
 
-        // Abort if requested bounds would overflow the work area
-        if (xCandidate + width > work.width || yCandidate + height > work.height) {
-            console.warn('[MAIN] Aborting setMainWindowBounds - requested bounds would overflow work area', { x: xCandidate, y: yCandidate, width, height, work });
-            return;
-        }
-
-        // Clamp position so it's not negative
-        const x = Math.max(0, xCandidate);
-        const y = Math.max(0, yCandidate);
+        // Clamp position so the window always fits within the work area. The
+        // window's outer size can be a few px larger than the nominal size
+        // (e.g. 551 vs 550) due to the frame, so instead of aborting (which left
+        // the window unable to restore), nudge the position up/left to fit.
+        const x = Math.max(0, Math.min(xCandidate, work.width - width));
+        const y = Math.max(0, Math.min(yCandidate, work.height - height));
 
         mainWindowSize = { width, height };
         mainWindowPosition = { x, y };
@@ -955,12 +1003,80 @@ app.on('second-instance', (event, commandLine, workingDirectory) => {
 
 initTitlebarSupport();
 
-const autoLaunch = new AutoLaunch({
-    name: 'SnapAway',
-    path: process.execPath,
-    args: ['--autostart'],
-    icon: getDefaultIconPath() || path.join(cwd, 'snapaway.ico')
-});
+// Login item management via Electron's built-in API
+// No auto-launch package needed - HKCU registry does not require elevation
+function setLoginItemEnabled(enable) {
+    app.setLoginItemSettings({
+        openAtLogin: enable,
+        path: process.execPath,
+        args: ['--autostart']
+    });
+}
+
+function isLoginItemEnabled() {
+    const settings = app.getLoginItemSettings();
+    return settings.openAtLogin;
+}
+
+async function runHelperAction(action, params = {}) {
+    const helperPath = resolveHelperPath();
+    if (!helperPath) {
+        return {
+            success: false,
+            error: 'HELPER_NOT_FOUND',
+            message: 'SnapAwayHelper.exe não encontrado nesta instalação.'
+        };
+    }
+
+    const payload = Buffer.from(JSON.stringify({ action, ...params }), 'utf8').toString('base64');
+    const resultFile = path.join(os.tmpdir(), `snapaway-helper-${Date.now()}-${Math.random().toString(16).slice(2)}.json`);
+    const args = ['--payloadBase64', payload, '--resultFile', resultFile];
+
+    try {
+        // Run helper WITHOUT elevation (HKCU does not need admin)
+        const child = spawn(helperPath, args, {
+            cwd: path.dirname(helperPath),
+            stdio: 'ignore',
+            windowsHide: true
+        });
+
+        const result = await new Promise((resolve) => {
+            const startTime = Date.now();
+            const maxWait = 30000;
+            const interval = setInterval(() => {
+                if (fs.existsSync(resultFile)) {
+                    clearInterval(interval);
+                    clearTimeout(timeout);
+                    try {
+                        const raw = fs.readFileSync(resultFile, 'utf8');
+                        const parsed = JSON.parse(raw);
+                        resolve(parsed && typeof parsed === 'object' ? parsed : { success: false, error: 'HELPER_INVALID_RESPONSE' });
+                    } catch (e) {
+                        resolve({ success: false, error: 'HELPER_ERROR', message: e.message });
+                    } finally {
+                        try { fs.unlinkSync(resultFile); } catch (_) { }
+                    }
+                } else if (Date.now() - startTime > maxWait) {
+                    clearInterval(interval);
+                    resolve({ success: false, error: 'HELPER_TIMEOUT', message: 'Timeout aguardar helper' });
+                }
+            }, 200);
+
+            const timeout = setTimeout(() => {
+                clearInterval(interval);
+                resolve({ success: false, error: 'HELPER_TIMEOUT', message: 'Timeout aguardar helper' });
+            }, maxWait);
+        });
+
+        return result;
+    } catch (error) {
+        return {
+            success: false,
+            error: 'HELPER_SPAWN_FAILED',
+            message: error.message
+        };
+    }
+}
 
 function hashPin(pin) {
     if (!/^\d{4}$/.test(pin)) {
@@ -1441,6 +1557,186 @@ function applyCloaking() {
     } catch (error) {
         console.error('[MAIN] Error in applyCloaking:', error);
     }
+}
+
+function getWindowHwndString(targetWindow) {
+    try {
+        if (!targetWindow || targetWindow.isDestroyed()) return ''
+        const handleBuffer = targetWindow.getNativeWindowHandle()
+        if (!handleBuffer || handleBuffer.length === 0) return ''
+
+        let value = 0n
+        for (let i = handleBuffer.length - 1; i >= 0; i -= 1) {
+            value = (value << 8n) + BigInt(handleBuffer[i])
+        }
+        return value.toString()
+    } catch (_) {
+        return ''
+    }
+}
+
+function isSnapAwayWindowHwnd(hwndStr) {
+    if (!hwndStr) return false
+    try {
+        const normalize = (value) => {
+            if (!value) return ''
+            const raw = String(value).trim().toLowerCase()
+            if (!raw) return ''
+            if (raw.startsWith('0x')) {
+                try {
+                    return BigInt(raw).toString(10)
+                } catch (_) {
+                    return raw
+                }
+            }
+            return raw
+        }
+
+        const target = normalize(hwndStr)
+        return BrowserWindow.getAllWindows().some(win => normalize(getWindowHwndString(win)) === target)
+    } catch (_) {
+        return false
+    }
+}
+
+async function handleOverlayClick(hwndStr) {
+    if (!hwndStr) return
+
+    const registered = system.registerWindow(hwndStr)
+    if (!registered) {
+        console.log('[OVERLAY] ignored click for invalid window:', hwndStr)
+        return
+    }
+
+    // Add to persisted config.filters so it appears in the filters list
+    let addedExecutable = null
+    try {
+        const filter = system.buildManagedFilterFromHwnd(hwndStr)
+        if (filter && filter.title) {
+            addedExecutable = filter.executable || null
+            const titleFilter = {
+                type: 'title',
+                value: filter.title,
+                hwnd: filter.hwnd,
+                title: filter.title,
+                className: filter.className,
+                process: filter.process,
+                executable: addedExecutable,
+                icon: system.getIconUrlForExecutable(addedExecutable) || null,
+                insensitive: false
+            }
+            const exists = Array.isArray(config.filters) && config.filters.some(f =>
+                f.type === 'title' && f.value === filter.title
+            )
+            if (!exists) {
+                if (!Array.isArray(config.filters)) config.filters = []
+                config.filters.push(titleFilter)
+                await updateConfig(config)
+                console.log('[OVERLAY] added to filters:', filter.title, '| icon:', titleFilter.icon)
+
+                // If the icon was not cached yet, resolve it on demand and update
+                // the filter once available (works even after the window is hidden).
+                if (!titleFilter.icon && addedExecutable) {
+                    system.resolveIconForExecutable(addedExecutable).then(iconUrl => {
+                        if (!iconUrl) return
+                        const idx = Array.isArray(config.filters) ? config.filters.findIndex(f =>
+                            f.executable === addedExecutable && f.value === filter.title
+                        ) : -1
+                        if (idx !== -1 && !config.filters[idx].icon) {
+                            config.filters[idx].icon = iconUrl
+                            updateConfig(config)
+                            console.log('[OVERLAY] filter icon resolved:', filter.title, '|', iconUrl)
+                        }
+                    })
+                }
+            }
+        }
+    } catch (error) {
+        console.warn('[OVERLAY] failed to add filter for clicked window:', error && error.message ? error.message : error)
+    }
+
+    // Hide the clicked window immediately. If it belongs to an elevated process
+    // (hiding requires elevation), go straight to the elevated helper — the UAC
+    // prompt itself is the confirmation, so no extra "ask admin?" dialog that
+    // just slows down the hide gesture.
+    try {
+        const hideResult = await system.enableHideState(hwndStr)
+        if (hideResult && hideResult.requiresElevation) {
+            console.log('[OVERLAY] target window requires elevation to hide, elevating');
+            const elevatedResult = await runElevatedAction('hide-window', { hwnd: hwndStr });
+            if (!elevatedResult || !elevatedResult.success) {
+                console.warn('[OVERLAY] elevated hide failed:', elevatedResult && elevatedResult.message ? elevatedResult.message : 'unknown');
+            }
+        }
+    } catch (error) {
+        console.warn('[OVERLAY] failed to hide clicked window immediately:', error && error.message ? error.message : error)
+    }
+
+    if (global.currentState !== 'hide') {
+        toggleShowHide('hide', 'titlebar-overlay', true)
+        if (global.uiMode === 'main') {
+            toggleUIMode('float', 'titlebar-overlay')
+        }
+        return
+    }
+
+    try {
+        await system.enableHideStateForSelected()
+    } catch (error) {
+        console.warn('[OVERLAY] failed to apply hide-state for selected windows:', error && error.message ? error.message : error)
+    }
+}
+
+function startTitlebarOverlay() {
+    if (process.platform !== 'win32') return
+    if (config.showTitlebarOverlay === false) {
+        console.log('[OVERLAY] disabled by config')
+        return
+    }
+    // If a manager already exists (possibly stale after a stop that didn't
+    // complete), tear it down and recreate from scratch so re-enabling always
+    // produces a fully working overlay.
+    if (titlebarOverlayManager) {
+        console.log('[OVERLAY] manager already exists — recreating')
+        stopTitlebarOverlay()
+    }
+
+    console.log('[OVERLAY] starting titlebar overlay manager')
+
+    titlebarOverlayManager = createOverlayManager({
+        ipcMain,
+        isOwnWindow: isSnapAwayWindowHwnd,
+        isWindowManaged: hwndStr => {
+            try {
+                return system.isWindowManaged(hwndStr)
+            } catch (_) {
+                return false
+            }
+        },
+        // Never show the overlay icon while the app is in the "hide" state
+        // (windows hidden). It only makes sense to offer hiding when things
+        // are visible.
+        shouldShowOverlay: () => global.currentState !== 'hide',
+        onClick: handleOverlayClick
+    })
+
+    try {
+        titlebarOverlayManager.start()
+        console.log('[OVERLAY] titlebar overlay manager started')
+    } catch (error) {
+        console.warn('[OVERLAY] failed to start titlebar overlay:', error && error.message ? error.message : error)
+        titlebarOverlayManager = null
+    }
+}
+
+function stopTitlebarOverlay() {
+    if (!titlebarOverlayManager) return
+    try {
+        titlebarOverlayManager.stop()
+    } catch (error) {
+        console.warn('[OVERLAY] failed to stop titlebar overlay:', error && error.message ? error.message : error)
+    }
+    titlebarOverlayManager = null
 }
 
 function createWindow() {
@@ -1987,6 +2283,19 @@ async function updateConfig(newConfig) {
         console.error(error);
     }
 
+    // Handle titlebar overlay toggle
+    if (newConfig && Object.prototype.hasOwnProperty.call(newConfig, 'showTitlebarOverlay')) {
+        console.log('[OVERLAY] config change → showTitlebarOverlay =', config.showTitlebarOverlay, '| manager =', !!titlebarOverlayManager);
+        if (config.showTitlebarOverlay === false && titlebarOverlayManager) {
+            stopTitlebarOverlay();
+            console.log('[OVERLAY] stopped by config change');
+        } else if (config.showTitlebarOverlay !== false && !titlebarOverlayManager) {
+            console.log('[OVERLAY] re-enabling overlay via config change');
+            startTitlebarOverlay();
+            console.log('[OVERLAY] started by config change (manager now:', !!titlebarOverlayManager + ')');
+        }
+    }
+
     (async () => {
         const storeCtx = getStoreInstallContext();
         if (storeCtx.isStoreInstall) {
@@ -1994,13 +2303,16 @@ async function updateConfig(newConfig) {
             return;
         }
         const shouldEnable = config.startup;
-        autoLaunch.isEnabled().then(enabled => {
+        try {
+            const enabled = isLoginItemEnabled();
             if (shouldEnable && !enabled) {
-                autoLaunch.enable();
+                setLoginItemEnabled(true);
             } else if (!shouldEnable && enabled) {
-                autoLaunch.disable();
+                setLoginItemEnabled(false);
             }
-        });
+        } catch (e) {
+            console.warn('[MAIN] Config change startup sync failed:', e.message);
+        }
     })();
 
     if (languageChanged) {
@@ -3104,10 +3416,8 @@ ipcMain.handle('hide-specific-window', async (event, hwnd) => {
         console.log('[MAIN] Hiding specific window with HWND:', hwnd);
         const result = await system.hideSpecificWindow(hwnd);
         if (result && result.requiresElevation) {
-            const confirmed = await askForElevation('Ocultar janela', `HWND: ${hwnd}`);
-            if (!confirmed) {
-                return { success: false, code: 'USER_CANCELLED', message: 'Operação cancelada pelo usuário.' };
-            }
+            // Go straight to the elevated helper — the UAC prompt is the
+            // confirmation; an extra "ask admin?" dialog only slows down hiding.
             const elevatedResult = await runElevatedAction('hide-window', { hwnd });
             if (!elevatedResult || !elevatedResult.success) {
                 return elevatedResult || { success: false, code: 'HELPER_FAILED', message: 'Helper elevado não conseguiu ocultar a janela.' };
@@ -3330,7 +3640,8 @@ ipcMain.handle('check-app-limit', async (event, currentCount) => {
 ipcMain.handle('open-payment-page', async () => {
     try {
         // Use PayPal simple link with email instead of PayPal.me (PayPal.me requires business account)
-        const paymentUrl = 'https://hub.edenware.app/go/snapaway';
+        // /hub/go/snapaway → redirect do servidor para o simple PayPal link do app
+        const paymentUrl = 'https://edenware.app/hub/go/snapaway';
         await shell.openExternal(paymentUrl);
         return { success: true };
     } catch (error) {
@@ -3500,33 +3811,58 @@ ipcMain.handle('set-startup', async (event, enable) => {
             const state = await runWinRTStartupTask(enable ? 'enable' : 'disable');
             console.log('[MAIN] WinRT StartupTask set to', enable ? 'enable' : 'disable', '→ state:', state);
             const isEnabled = state === 'Enabled' || state === 'EnabledByPolicy';
-            config.startup = isEnabled;
-            await updateConfig(config);
             const disabledByUser = state === 'DisabledByUser';
-            return { success: !!state, startupTaskState: state, isEnabled, disabledByUser };
+
+            if (state) {
+                // PowerShell succeeded — use its result
+                config.startup = isEnabled;
+                await updateConfig(config);
+                return { success: true, startupTaskState: state, isEnabled, disabledByUser };
+            }
+
+            // PowerShell failed (null). Try Electron API + helper as fallback.
+            console.warn('[MAIN] WinRT StartupTask failed, falling back to Electron API + helper for MSIX');
         }
 
-        if (enable) {
-            await autoLaunch.enable();
-        } else {
-            await autoLaunch.disable();
-        }
-        config.startup = enable;
-        await updateConfig(config);
+        // Passo 1: Tentar com Electron API nativa (escreve em HKCU, sem elevação necessária)
+        try {
+            setLoginItemEnabled(enable);
+            config.startup = enable;
+            await updateConfig(config);
+            console.log('[MAIN] Startup set via Electron API:', enable);
+            return { success: true, isEnabled: enable };
+        } catch (electronError) {
+            console.warn('[MAIN] Electron setLoginItemSettings failed, trying helper:', electronError.message);
 
-        return { success: true, isEnabled: enable };
+            // Passo 2: Tentar com helper não-elevado (também escreve em HKCU)
+            try {
+                const helperResult = await runHelperAction('set-autostart', getAutostartArgs(enable));
+                if (helperResult && helperResult.success) {
+                    config.startup = enable;
+                    await updateConfig(config);
+                    console.log('[MAIN] Startup set via helper (non-elevated):', enable);
+                    return { success: true, isEnabled: enable, helper: true };
+                }
+                throw new Error(helperResult && helperResult.message ? helperResult.message : 'Helper non-elevated failed');
+            } catch (helperError) {
+                console.warn('[MAIN] Helper non-elevated failed, trying elevated:', helperError.message);
+
+                // Passo 3: Pedir elevação como último recurso
+                if (window && await askForElevation('Startup automático', enable ? 'Habilitar inicialização com Windows' : 'Desabilitar inicialização com Windows')) {
+                    const elevatedResult = await setStartupWithElevation(enable);
+                    if (elevatedResult && elevatedResult.success) {
+                        config.startup = enable;
+                        await updateConfig(config);
+                        return { success: true, isEnabled: enable, elevated: true };
+                    }
+                    return { success: false, message: elevatedResult && elevatedResult.message ? elevatedResult.message : 'Falha ao configurar inicialização mesmo com elevação', code: elevatedResult && elevatedResult.code };
+                }
+                return { success: false, message: 'Operação cancelada pelo usuário.' };
+            }
+        }
     } catch (error) {
         console.error('[MAIN] Error setting startup:', error);
-        if (window && await askForElevation('Startup automático', enable ? 'Habilitar inicialização com Windows' : 'Desabilitar inicialização com Windows')) {
-            const elevatedResult = await setStartupWithElevation(enable);
-            if (elevatedResult && elevatedResult.success) {
-                config.startup = enable;
-                await updateConfig(config);
-                return { success: true, isEnabled: enable, elevated: true };
-            }
-            return { success: false, message: elevatedResult && elevatedResult.message ? elevatedResult.message : 'Failed to set startup elevated', code: elevatedResult && elevatedResult.code };
-        }
-        return { success: false, message: error.message || 'Failed to set startup' };
+        return { success: false, message: error.message || 'Falha ao configurar inicialização' };
     }
 });
 
@@ -3535,11 +3871,15 @@ ipcMain.handle('get-startup-state', async () => {
         const storeCtx = getStoreInstallContext();
         if (storeCtx.isStoreInstall) {
             const state = await runWinRTStartupTask('get');
-            const isEnabled = state === 'Enabled' || state === 'EnabledByPolicy';
-            return { isStoreInstall: true, state, isEnabled };
+            if (state) {
+                const isEnabled = state === 'Enabled' || state === 'EnabledByPolicy';
+                return { isStoreInstall: true, state, isEnabled };
+            }
+            // PowerShell failed — fallback to Electron API
+            console.warn('[MAIN] WinRT StartupTask get failed, falling back to Electron API');
         }
-        const isEnabled = await autoLaunch.isEnabled();
-        return { isStoreInstall: false, isEnabled: !!isEnabled };
+        const isEnabled = isLoginItemEnabled();
+        return { isStoreInstall: storeCtx.isStoreInstall || false, isEnabled: !!isEnabled };
     } catch (error) {
         console.error('[MAIN] Error getting startup state:', error);
         return { isStoreInstall: false, isEnabled: !!config.startup };
@@ -3975,8 +4315,12 @@ app.whenReady().then(async () => {
     detectAndSetLanguage();
     if (process.platform === 'win32') {
         try {
-            app.setAppUserModelId('app.edenware.snapcover');
-            console.log('[MAIN] setAppUserModelId: app.edenware.snapcover');
+            // Must match the AppUserModelId registered by the installer
+            // (electron-builder appId: Edenware.app.Snapcover), otherwise
+            // Windows shows the raw AUMID as the notification title instead
+            // of the app display name ("SnapAway").
+            app.setAppUserModelId('Edenware.app.Snapcover');
+            console.log('[MAIN] setAppUserModelId: Edenware.app.Snapcover');
         } catch (error) {
             console.warn('[MAIN] Failed to set AppUserModelId:', error);
         }
@@ -3990,6 +4334,7 @@ app.whenReady().then(async () => {
 
     // Create the main window immediately so UI can start loading.
     createWindow();
+    startTitlebarOverlay();
 
     // Initialize license and startup tasks in the background so they do not block initial UI.
     (async () => {
@@ -4568,6 +4913,7 @@ app.on('second-instance', () => {
 
 app.on('window-all-closed', () => {
     appendIapTrace('app.window-all-closed', { platform: process.platform });
+    stopTitlebarOverlay()
     if (process.platform !== 'darwin') {
         // Limpar sistema de áudio antes de sair
         system.cleanupAudio().catch(error => {
@@ -4582,8 +4928,13 @@ app.on('activate', () => {
     appendIapTrace('app.activate');
     if (BrowserWindow.getAllWindows().length === 0) {
         createWindow();
+        startTitlebarOverlay()
     }
 });
+
+app.on('before-quit', () => {
+    stopTitlebarOverlay()
+})
 
 app.on('child-process-gone', (event, details) => {
     console.error('[MAIN] child-process-gone:', details);

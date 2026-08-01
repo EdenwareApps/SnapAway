@@ -36,5 +36,6 @@
     },
     "cloakEnabled": false,
     "cloakName": "",
-    "cloakIconPath": null
+    "cloakIconPath": null,
+    "showTitlebarOverlay": true
   }

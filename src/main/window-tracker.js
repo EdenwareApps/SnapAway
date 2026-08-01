@@ -1,0 +1,396 @@
+const { screen } = require('electron')
+const koffi = require('./koffi-wrapper')
+const { detectTitlebarHover } = require('./titlebar-detector')
+const {
+  getApproximateTitlebarAnalysis,
+  getCachedTitlebarAnalysis,
+  getTitlebarAnalysisCacheState,
+  warmupTitlebarAnalysis
+} = require('./titlebar-screenshot-analyzer')
+
+const DWMWA_EXTENDED_FRAME_BOUNDS = 9
+const DWMWA_CLOAKED = 14
+const DWMWA_CAPTION_BUTTON_BOUNDS = 5
+const DWMWA_CAPTION_COLOR = 35
+const DWMWA_USE_IMMERSIVE_DARK_MODE = 20
+const GA_ROOT = 2
+
+const BLOCKED_CLASS_NAMES = new Set([
+  'Shell_TrayWnd',
+  'Shell_SecondaryTrayWnd',
+  'Progman',
+  'WorkerW',
+  'Windows.UI.Core.CoreWindow',
+  'Windows.Internal.Shell.TabProxyWindow'
+])
+
+const LIKELY_GAME_CLASS_NAMES = new Set([
+  'UnrealWindow',
+  'UnityWndClass',
+  'CEF-OSC-WIDGET',
+  'SDL_app',
+  'PX_WINDOW_CLASS'
+])
+
+function ptrToHwndString(hwnd) {
+  if (!hwnd) return ''
+  const address = koffi.address(hwnd)
+  if (typeof address === 'bigint') {
+    return `0x${address.toString(16)}`
+  }
+  if (typeof address === 'number') {
+    return `0x${address.toString(16)}`
+  }
+  return String(address)
+}
+
+// koffi registers struct types globally by name. Register them once at module
+// level and reuse, otherwise creating a second interop (e.g. re-enabling the
+// overlay after disabling it) throws "Duplicate type name 'POINT'".
+let sharedInteropTypes = null
+function getInteropTypes() {
+  if (sharedInteropTypes) return sharedInteropTypes
+  const POINT = koffi.struct('POINT', {
+    x: 'long',
+    y: 'long'
+  })
+
+  const RECT = koffi.struct('RECT', {
+    left: 'long',
+    top: 'long',
+    right: 'long',
+    bottom: 'long'
+  })
+  sharedInteropTypes = { POINT, RECT }
+  return sharedInteropTypes
+}
+
+function createInterop() {
+  if (!koffi || process.platform !== 'win32') return null
+
+  const { POINT, RECT } = getInteropTypes()
+
+  const user32 = koffi.load('user32.dll')
+  const dwmapi = koffi.load('dwmapi.dll')
+
+  return {
+    POINT,
+    RECT,
+    funcs: {
+      GetForegroundWindow: user32.func('void * __stdcall GetForegroundWindow()'),
+      GetCursorPos: user32.func('bool __stdcall GetCursorPos(_Out_ POINT *lpPoint)'),
+      WindowFromPoint: user32.func('void * __stdcall WindowFromPoint(POINT Point)'),
+      GetWindowRect: user32.func('bool __stdcall GetWindowRect(void * hWnd, _Out_ RECT *lpRect)'),
+      GetClassNameW: user32.func('int __stdcall GetClassNameW(void * hWnd, _Out_ char16_t *lpClassName, int nMaxCount)'),
+      IsWindow: user32.func('bool __stdcall IsWindow(void * hWnd)'),
+      IsWindowVisible: user32.func('bool __stdcall IsWindowVisible(void * hWnd)'),
+      GetWindowThreadProcessId: user32.func('uint32_t __stdcall GetWindowThreadProcessId(void * hWnd, _Out_ uint32_t *lpdwProcessId)'),
+      GetAncestor: user32.func('void * __stdcall GetAncestor(void * hWnd, uint32_t gaFlags)'),
+      DwmGetWindowAttribute: dwmapi.func('int __stdcall DwmGetWindowAttribute(void * hwnd, uint32_t dwAttribute, void * pvAttribute, uint32_t cbAttribute)')
+    }
+  }
+}
+
+function getClassName(funcs, hwnd) {
+  try {
+    const classNameBuffer = Buffer.alloc(256 * 2)
+    funcs.GetClassNameW(hwnd, classNameBuffer, 256)
+    return classNameBuffer.toString('utf16le').replace(/\0/g, '')
+  } catch (_) {
+    return ''
+  }
+}
+
+function readRect(funcs, RECT, hwnd, attributeId) {
+  const rectBuffer = Buffer.alloc(koffi.sizeof(RECT))
+  const hr = funcs.DwmGetWindowAttribute(hwnd, attributeId, rectBuffer, rectBuffer.length)
+  if (hr !== 0) return null
+  const rect = {
+    left: rectBuffer.readInt32LE(0),
+    top: rectBuffer.readInt32LE(4),
+    right: rectBuffer.readInt32LE(8),
+    bottom: rectBuffer.readInt32LE(12)
+  }
+  if (rect.right <= rect.left || rect.bottom <= rect.top) return null
+  return rect
+}
+
+function readDword(funcs, hwnd, attributeId) {
+  const outBuffer = Buffer.alloc(4)
+  const hr = funcs.DwmGetWindowAttribute(hwnd, attributeId, outBuffer, outBuffer.length)
+  if (hr !== 0) return null
+  return outBuffer.readUInt32LE(0)
+}
+
+function normalizeCaptionButtonsRect(captionRect, windowRect) {
+  if (!captionRect || !windowRect) return captionRect
+
+  const windowWidth = windowRect.right - windowRect.left
+  const windowHeight = windowRect.bottom - windowRect.top
+  if (windowWidth <= 0 || windowHeight <= 0) return captionRect
+
+  // DWMWA_CAPTION_BUTTON_BOUNDS may come relative to the window origin.
+  const looksRelative =
+    captionRect.left >= -2 &&
+    captionRect.top >= -2 &&
+    captionRect.right <= windowWidth + 2 &&
+    captionRect.bottom <= windowHeight + 2
+
+  if (!looksRelative) return captionRect
+
+  return {
+    left: captionRect.left + windowRect.left,
+    top: captionRect.top + windowRect.top,
+    right: captionRect.right + windowRect.left,
+    bottom: captionRect.bottom + windowRect.top
+  }
+}
+
+function isFullscreenWindow(windowRect) {
+  const display = screen.getDisplayMatching({
+    x: windowRect.left,
+    y: windowRect.top,
+    width: Math.max(1, windowRect.right - windowRect.left),
+    height: Math.max(1, windowRect.bottom - windowRect.top)
+  })
+
+  const displayBounds = display ? display.bounds : null
+  if (!displayBounds) return false
+
+  const tolerance = 2
+  const widthMatches = Math.abs((windowRect.right - windowRect.left) - displayBounds.width) <= tolerance
+  const heightMatches = Math.abs((windowRect.bottom - windowRect.top) - displayBounds.height) <= tolerance
+  const leftMatches = Math.abs(windowRect.left - displayBounds.x) <= tolerance
+  const topMatches = Math.abs(windowRect.top - displayBounds.y) <= tolerance
+
+  return widthMatches && heightMatches && leftMatches && topMatches
+}
+
+function createWindowTracker(options = {}) {
+  const interop = createInterop()
+  const funcs = interop && interop.funcs
+  const RECT = interop && interop.RECT
+
+  const state = {
+    timer: null,
+    running: false,
+    lastHwnd: null,
+    lastTick: 0,
+    lastAnalysisStateKey: ''
+  }
+
+  const pollIntervalActiveMs = Number(options.pollIntervalActiveMs) || 110
+  const pollIntervalIdleMs = Number(options.pollIntervalIdleMs) || 420
+
+  function scheduleNextTick(active) {
+    clearTimeout(state.timer)
+    const nextIn = active ? pollIntervalActiveMs : pollIntervalIdleMs
+    state.timer = setTimeout(tick, nextIn)
+  }
+
+  function buildResultSnapshot() {
+    if (!funcs || !RECT) {
+      return { eligible: false, reason: 'win32-interop-unavailable' }
+    }
+
+    const cursor = { x: 0, y: 0 }
+    if (!funcs.GetCursorPos(cursor)) {
+      return { eligible: false, reason: 'cursor-unavailable' }
+    }
+
+    const hoveredHwnd = funcs.WindowFromPoint(cursor)
+    if (!hoveredHwnd || !funcs.IsWindow(hoveredHwnd)) {
+      return { eligible: false, reason: 'no-hovered-window' }
+    }
+
+    const rootHwnd = funcs.GetAncestor(hoveredHwnd, GA_ROOT) || hoveredHwnd
+    if (!rootHwnd || !funcs.IsWindow(rootHwnd)) {
+      return { eligible: false, reason: 'invalid-root-window' }
+    }
+
+    const hwnd = ptrToHwndString(rootHwnd)
+    if (!hwnd) return { eligible: false, reason: 'invalid-hwnd' }
+
+    if (options.isOwnWindow && options.isOwnWindow(hwnd)) {
+      return { eligible: false, reason: 'own-window' }
+    }
+
+    if (!funcs.IsWindowVisible(rootHwnd)) {
+      return { eligible: false, reason: 'window-not-visible' }
+    }
+
+    // Use top-level window geometry to avoid anchoring to child controls.
+    const geometryHwnd = rootHwnd
+
+    const processIdHolder = [0]
+    funcs.GetWindowThreadProcessId(geometryHwnd, processIdHolder)
+    const processId = Number(processIdHolder[0])
+
+    if (processId === process.pid) {
+      return { eligible: false, reason: 'snapaway-process-window' }
+    }
+
+    const className = getClassName(funcs, geometryHwnd) || getClassName(funcs, rootHwnd)
+    if (BLOCKED_CLASS_NAMES.has(className)) {
+      return { eligible: false, reason: 'blocked-class' }
+    }
+
+    if (LIKELY_GAME_CLASS_NAMES.has(className)) {
+      return { eligible: false, reason: 'likely-game-class' }
+    }
+
+    const windowRectBuffer = { left: 0, top: 0, right: 0, bottom: 0 }
+    if (!funcs.GetWindowRect(geometryHwnd, windowRectBuffer) && !funcs.GetWindowRect(rootHwnd, windowRectBuffer)) {
+      return { eligible: false, reason: 'window-rect-unavailable' }
+    }
+
+    if (windowRectBuffer.right <= windowRectBuffer.left || windowRectBuffer.bottom <= windowRectBuffer.top) {
+      return { eligible: false, reason: 'invalid-window-rect' }
+    }
+
+    if (isFullscreenWindow(windowRectBuffer)) {
+      return { eligible: false, reason: 'fullscreen-window' }
+    }
+
+    const cloaked = readDword(funcs, geometryHwnd, DWMWA_CLOAKED)
+    if (cloaked && cloaked !== 0) {
+      return { eligible: false, reason: 'cloaked-window' }
+    }
+
+    const rawCaptionButtonsRect = readRect(funcs, RECT, geometryHwnd, DWMWA_CAPTION_BUTTON_BOUNDS)
+      || readRect(funcs, RECT, rootHwnd, DWMWA_CAPTION_BUTTON_BOUNDS)
+    const hoverWindowRect = windowRectBuffer
+    const captionButtonsRect = normalizeCaptionButtonsRect(rawCaptionButtonsRect, hoverWindowRect)
+    const extendedFrameRect = readRect(funcs, RECT, geometryHwnd, DWMWA_EXTENDED_FRAME_BOUNDS)
+      || readRect(funcs, RECT, rootHwnd, DWMWA_EXTENDED_FRAME_BOUNDS)
+
+    const windowKey = [
+      hwnd,
+      hoverWindowRect.right - hoverWindowRect.left,
+      hoverWindowRect.bottom - hoverWindowRect.top,
+      captionButtonsRect ? captionButtonsRect.width : 0,
+      captionButtonsRect ? captionButtonsRect.height : 0
+    ].join(':')
+
+    const cachedScreenshotAnalysis = getCachedTitlebarAnalysis(windowKey)
+    const allowApproximateForWindow = !!captionButtonsRect
+    const approximateScreenshotAnalysis = (!cachedScreenshotAnalysis && allowApproximateForWindow)
+      ? getApproximateTitlebarAnalysis({
+          windowKey,
+          windowRect: hoverWindowRect,
+          captionButtonsRect,
+          iconSize: Number(options.iconSize) || 16
+        })
+      : null
+    const resolvedScreenshotAnalysis = cachedScreenshotAnalysis || approximateScreenshotAnalysis
+    const analysisCacheState = getTitlebarAnalysisCacheState(windowKey)
+
+    const analysisStateLabel = analysisCacheState.hasCache
+      ? `hit:${analysisCacheState.source || 'unknown'}`
+      : (approximateScreenshotAnalysis
+          ? 'hit:approx'
+          : (analysisCacheState.pending ? 'pending' : (analysisCacheState.noResult ? 'no-result' : 'miss')))
+    const analysisStateKey = `${windowKey}:${analysisStateLabel}`
+    if (analysisStateKey !== state.lastAnalysisStateKey) {
+      console.log('[OVERLAY] titlebar analysis cache:', {
+        windowKey,
+        state: analysisStateLabel
+      })
+      state.lastAnalysisStateKey = analysisStateKey
+    }
+
+    const hoverInfo = detectTitlebarHover({
+      cursor,
+      windowRect: hoverWindowRect,
+      captionButtonsRect,
+      iconSize: Number(options.iconSize) || 16,
+      windowKey,
+      screenshotAnalysis: resolvedScreenshotAnalysis
+    })
+
+    if (!cachedScreenshotAnalysis) {
+      warmupTitlebarAnalysis({
+        windowKey,
+        windowRect: hoverWindowRect,
+        captionButtonsRect,
+        iconSize: Number(options.iconSize) || 16
+      })
+    }
+
+    if (!hoverInfo.visible) {
+      return {
+        eligible: false,
+        reason: hoverInfo.reason,
+        hwnd,
+        cursor,
+        processId,
+        className,
+        windowRect: hoverWindowRect
+      }
+    }
+
+    return {
+      eligible: true,
+      hwnd,
+      cursor,
+      processId,
+      className,
+      windowRect: hoverWindowRect,
+      extendedFrameRect: extendedFrameRect || null,
+      captionButtonsRect,
+      overlayBounds: hoverInfo.overlayBounds,
+      usingDwmCaptionBounds: hoverInfo.usingDwmCaptionBounds,
+      screenshotAnalysisSource: resolvedScreenshotAnalysis && resolvedScreenshotAnalysis.source
+        ? resolvedScreenshotAnalysis.source
+        : null,
+      captionColorRef: readDword(funcs, geometryHwnd, DWMWA_CAPTION_COLOR)
+        ?? readDword(funcs, rootHwnd, DWMWA_CAPTION_COLOR),
+      immersiveDarkMode: (() => {
+        const value = readDword(funcs, geometryHwnd, DWMWA_USE_IMMERSIVE_DARK_MODE)
+          ?? readDword(funcs, rootHwnd, DWMWA_USE_IMMERSIVE_DARK_MODE)
+        return value === null ? null : value !== 0
+      })()
+    }
+  }
+
+  function tick() {
+    if (!state.running) return
+
+    const snapshot = buildResultSnapshot()
+    state.lastTick = Date.now()
+    if (snapshot.eligible) {
+      state.lastHwnd = snapshot.hwnd
+    }
+
+    if (typeof options.onUpdate === 'function') {
+      try {
+        options.onUpdate(snapshot)
+      } catch (error) {
+        console.error('[OVERLAY] tracker update failed:', error)
+      }
+    }
+
+    scheduleNextTick(snapshot.eligible)
+  }
+
+  function start() {
+    if (state.running) return
+    state.running = true
+    scheduleNextTick(false)
+  }
+
+  function stop() {
+    state.running = false
+    clearTimeout(state.timer)
+    state.timer = null
+  }
+
+  return {
+    start,
+    stop
+  }
+}
+
+module.exports = {
+  createWindowTracker
+}

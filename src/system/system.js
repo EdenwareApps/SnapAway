@@ -94,6 +94,7 @@ const WindowConstants = {
 	WS_CHILD: 0x40000000,
 	SW_HIDE: 0,
 	SW_SHOW: 5,
+	SW_SHOWNA: 8,
 	SW_MINIMIZE: 6,
 	GW_HWNDFIRST: 0,    // Adicione
 	GW_HWNDNEXT: 2      // Adicione
@@ -102,6 +103,7 @@ const WindowConstants = {
 // Track hidden windows for notification badge
 let hiddenWindowsCount = 0;
 let hiddenWindowsSet = new Set();
+const hiddenWindowZOrder = new Map();
 
 // Native audio controller instance
 const nativeAudioController = new NativeAudioController();
@@ -115,10 +117,120 @@ const processManager = new ProcessManagerWrapper();
 // Cache for processed executables to avoid repeated icon extraction
 const processedExecutables = new Set();
 
+// session-only managed windows added by titlebar overlay clicks
+const sessionManagedWindows = new Map();
+
 // Function to clear the processed executables cache (useful for testing or when icons need to be refreshed)
 function clearProcessedExecutablesCache() {
     processedExecutables.clear();
     console.log('[ICONS] Cleared processed executables cache');
+}
+
+function getAllSelectionFilters() {
+	const persisted = Array.isArray(config.filters) ? config.filters : []
+	if (sessionManagedWindows.size === 0) return persisted
+	return [...persisted, ...Array.from(sessionManagedWindows.values()).map(item => item.filter)]
+}
+
+function buildManagedFilterFromHwnd(hwndStr) {
+	if (!hwndStr || !processManager.isWindow(hwndStr)) {
+		return null
+	}
+
+	const title = processManager.getWindowText(hwndStr) || ''
+	const className = processManager.getClassName(hwndStr) || ''
+	const executable = getExecutableFromHwnd(hwndStr)
+	const process = executable ? path.basename(executable) : ''
+
+	return {
+		type: 'overlay-hwnd',
+		value: hwndStr,
+		hwnd: hwndStr,
+		title,
+		className,
+		process,
+		executable,
+		insensitive: false
+	}
+}
+
+// Returns the cached icon:// URL for an executable path, if any.
+function getIconUrlForExecutable(executable) {
+	if (!executable) return ''
+	const cached = icons[executable]
+	if (!cached) return ''
+	return cached.startsWith('icon://') ? cached : 'icon://' + encodeURIComponent(cached)
+}
+
+// Resolves an icon:// URL for an executable, extracting it on demand if it is
+// not cached yet. Resolves to null when unavailable. Used by the overlay click
+// path so a filter added via the overlay gets its icon even if the window is
+// hidden right away (and thus no longer present in the visible process list).
+function resolveIconForExecutable(executable) {
+	if (!executable) return Promise.resolve(null)
+	const cached = getIconUrlForExecutable(executable)
+	if (cached) return Promise.resolve(cached)
+	if (!iconExtractor.isAvailable) return Promise.resolve(null)
+
+	const tempDir = path.join(
+		process.env.TEMP || process.env.TMP || os.tmpdir() || '/tmp',
+		'SnapAway',
+		'icons'
+	)
+	try {
+		fs.mkdirSync(tempDir, { recursive: true })
+	} catch (_) {}
+	return iconExtractor.extractIcons([executable], tempDir)
+		.then(mappings => {
+			const extracted = mappings && mappings[executable]
+			if (!extracted) return null
+			const iconUrl = 'icon://' + encodeURIComponent(extracted)
+			if (icons[executable] !== iconUrl) {
+				icons[executable] = iconUrl
+				events.emit('icon', icons)
+			}
+			return iconUrl
+		})
+		.catch(error => {
+			console.error('[ICON] Error resolving icon for executable:', executable, error && error.message ? error.message : error)
+			return null
+		})
+}
+
+function registerWindow(hwndStr) {
+	const filter = buildManagedFilterFromHwnd(hwndStr)
+	if (!filter) {
+		return false
+	}
+
+	sessionManagedWindows.set(hwndStr, {
+		hwnd: hwndStr,
+		filter,
+		createdAt: Date.now()
+	})
+
+	return true
+}
+
+function isWindowManaged(hwndStr) {
+	if (!hwndStr) return false
+	if (sessionManagedWindows.has(hwndStr)) return true
+
+	const allFilters = getAllSelectionFilters()
+	return allFilters.some(filter => filter && filter.hwnd && filter.hwnd === hwndStr)
+}
+
+async function enableHideState(hwndStr) {
+	return hideSpecificWindow(hwndStr)
+}
+
+async function enableHideStateForSelected() {
+	return hideWindows()
+}
+
+function hasManagedWindows() {
+	const persistedFilters = Array.isArray(config.filters) ? config.filters.length : 0
+	return persistedFilters > 0 || sessionManagedWindows.size > 0
 }
 
 // Initialize icon extractor and ensure temp directory exists
@@ -200,7 +312,7 @@ async function initializeAudio() {
 
 async function externalShowWindow(windows, show=false) {
 	console.log('!!! externalShowWindow', windows, show);
-	show = WindowConstants[show === true ? 'SW_SHOW' : 'SW_HIDE'];
+	show = WindowConstants[show === true ? 'SW_SHOWNA' : 'SW_HIDE'];
 	const hungWindows = windows.filter(hwndStr => {
 		if(processManager.isHungAppWindow(hwndStr)) return true;
 		processManager.showWindow(hwndStr, show);
@@ -254,6 +366,21 @@ async function externalShowWindow(windows, show=false) {
 	});
 }
 
+function captureZOrderSnapshot() {
+	const snapshot = new Map();
+	try {
+		const windows = processManager.enumWindows();
+		for (let i = 0; i < windows.length; i += 1) {
+			const window = windows[i];
+			if (!window || !window.hwnd) continue;
+			snapshot.set(window.hwnd, i);
+		}
+	} catch (error) {
+		console.error('[SYSTEM] Failed to capture z-order snapshot:', error);
+	}
+	return snapshot;
+}
+
 function isValidWindow(hwndStr) {
 	try {
 		// Verificar estilo da janela
@@ -298,7 +425,7 @@ function isFilteredWindow(hwndStr) {
 		windowData = { hwnd: hwndStr, process: '', title: '', className: '' };
 	}
 
-	return config.filters.some(filter => {
+	return getAllSelectionFilters().some(filter => {
 		if (filter.hwnd && hwndStr === filter.hwnd) {
 			return true;
 		}
@@ -311,6 +438,8 @@ function isFilteredWindow(hwndStr) {
 		};
 
 		switch (filter.type) {
+			case 'overlay-hwnd':
+				return hwndStr === filter.hwnd
 			case 'title':
 				return windowData.title && compare(windowData.title, filter.value);
 			case 'process':
@@ -469,7 +598,7 @@ async function iterateWindows(callback, hwndOnly = false, skipHiddenWindows = fa
 	const windows = await list(false, skipHiddenWindows);
 	windows.forEach(win => {
 		const hwndStr = win.hwnd; // Already a string
-		config.filters.some(filter => {
+		getAllSelectionFilters().some(filter => {
 			if (hwndOnly && hwndStr != filter.hwnd) {
 				return false;
 			}
@@ -489,6 +618,12 @@ async function iterateWindows(callback, hwndOnly = false, skipHiddenWindows = fa
 				return a.includes(b);
 			}
 			switch (filter.type) {
+				case 'overlay-hwnd':
+					if (hwndStr === filter.hwnd) {
+						callback(win)
+						return true
+					}
+					break
 				case 'title':
 					if (win.title && compare(win.title, filter.value)) {
 						callback(win);
@@ -603,6 +738,7 @@ async function unmuteWindowAudio(hwndStr) {
 
 async function hideWindows() {
 	const queue = [], hidden = [];
+	const zOrderSnapshot = captureZOrderSnapshot();
 	await iterateWindows(async (win) => {
 		const processInfo = processManager.getWindowThreadProcessId(win.hwnd);
 		console.log(`[AUDIO] Processing window: ${win.process} (HWND: ${win.hwnd}, PID: ${processInfo ? processInfo.processId : 'unknown'})`);
@@ -622,6 +758,7 @@ async function hideWindows() {
 			return;
 		}
 		if (!isWindowHidden(win.hwnd)) {
+			hiddenWindowZOrder.set(win.hwnd, zOrderSnapshot.get(win.hwnd) ?? Number.MAX_SAFE_INTEGER);
 			if (processManager.isHungAppWindow(win.hwnd)) {
 				queue.push(win.hwnd);
 			} else {
@@ -648,6 +785,8 @@ async function hideWindows() {
 
 async function hideSpecificWindow(hwndStr) {
 	console.log(`[SYSTEM] Hiding specific window with HWND: ${hwndStr}`);
+	const zOrderSnapshot = captureZOrderSnapshot();
+	hiddenWindowZOrder.set(hwndStr, zOrderSnapshot.get(hwndStr) ?? Number.MAX_SAFE_INTEGER);
 	
 	if (!isWindowHidden(hwndStr)) {
 		if (processManager.isHungAppWindow(hwndStr)) {
@@ -696,7 +835,7 @@ async function showSpecificWindow(hwndStr) {
 			return false;
 		}
 
-		processManager.showWindow(hwndStr, WindowConstants.SW_SHOW);
+		processManager.showWindow(hwndStr, WindowConstants.SW_SHOWNA);
 
 		// Remove from hidden tracking lists
 		config.hiddenWindows = config.hiddenWindows.filter(h => h !== hwndStr);
@@ -736,16 +875,24 @@ async function showWindows() {
 		}
 	}, true, false);
 
-	const hasHiddenWindows = queue.length > 0;
+	const dedupedQueue = [...new Set(queue)].filter(hwndStr => processManager.isWindow(hwndStr));
+	dedupedQueue.sort((a, b) => {
+		const za = hiddenWindowZOrder.has(a) ? hiddenWindowZOrder.get(a) : Number.MAX_SAFE_INTEGER;
+		const zb = hiddenWindowZOrder.has(b) ? hiddenWindowZOrder.get(b) : Number.MAX_SAFE_INTEGER;
+		return zb - za;
+	});
+
+	const hasHiddenWindows = dedupedQueue.length > 0;
 	
 	// Desmutar o áudio de todas as janelas que serão exibidas apenas se a configuração estiver ativada
 	if (config.muteWindows) {
-		await Promise.all(queue.map(hwndStr => unmuteWindowAudio(hwndStr).catch(error => {
+		await Promise.all(dedupedQueue.map(hwndStr => unmuteWindowAudio(hwndStr).catch(error => {
 			console.error('[AUDIO] Error unmuting window audio during show:', error);
 		})));
 	}
 
-	await externalShowWindow(queue, true);
+	await externalShowWindow(dedupedQueue, true);
+	dedupedQueue.forEach(hwndStr => hiddenWindowZOrder.delete(hwndStr));
 
 	// Clear all hidden windows tracking quando mostrar todas as janelas
 	clearHiddenWindows();
@@ -891,5 +1038,13 @@ module.exports = {
 	cleanupOrphanedHiddenWindows,
 	getHiddenWindowsCount: updateNotificationBadge,
 	clearProcessedExecutablesCache,
+	registerWindow,
+	buildManagedFilterFromHwnd,
+	getIconUrlForExecutable,
+	resolveIconForExecutable,
+	isWindowManaged,
+	enableHideState,
+	enableHideStateForSelected,
+	hasManagedWindows,
 	...processManager
 }

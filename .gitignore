@@ -166,3 +166,5 @@ out/
 out_asar_extract/
 tmp_asar/
 dist/
+/bak
+src/language/texts.backup.json

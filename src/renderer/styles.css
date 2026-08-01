@@ -63,7 +63,7 @@ input, button, select, option {
   background: #0078d4;
   color: #fff;
   cursor: pointer;
-  font-size: 12px;
+  font-size: 13px;
 }
 
 .auth-buttons button:hover {
@@ -203,7 +203,7 @@ body, html {
 
 /* Font size classes */
 .font-size-small {
-  font-size: 12px;
+  font-size: 13px;
 }
 
 .font-size-medium {
@@ -212,10 +212,6 @@ body, html {
 
 .font-size-large {
   font-size: 16px;
-}
-
-.font-size-xlarge {
-  font-size: 18px;
 }
 
 /* Border radius variables */
