@@ -199,7 +199,7 @@ static napi_value pm_GetExecutablePath(napi_env env, napi_callback_info info) {
     uint32_t pid;
     napi_get_value_uint32(env, argv[0], &pid);
 
-    HANDLE h = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, FALSE, (DWORD)pid);
+    HANDLE h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, (DWORD)pid);
     if (!h) {
         napi_value ret; napi_create_string_utf8(env, "", 0, &ret);
         return ret;

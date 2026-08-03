@@ -107,85 +107,115 @@ public:
         }
     }
 
-    bool muteProcess(DWORD processId, bool mute) {
-        if (!sessionManager) return false;
-
-        IAudioSessionEnumerator* sessionEnumerator = nullptr;
-        HRESULT hr = sessionManager->GetSessionEnumerator(&sessionEnumerator);
-        if (FAILED(hr)) return false;
-
-        int sessionCount = 0;
-        hr = sessionEnumerator->GetCount(&sessionCount);
-        if (FAILED(hr)) {
-            sessionEnumerator->Release();
-            return false;
+    // Executa `fn` com o IAudioSessionManager2 de CADA dispositivo de reprodução
+    // ativo. Mute/verificação por processo precisa cobrir todos os endpoints —
+    // usar só o dispositivo padrão falha quando o app sai por outro endpoint
+    // (fone/HDMI/virtual cable), que era a causa do WMP não ser mutado.
+    template <typename Fn>
+    void EnumerateSessionManagers(Fn fn) {
+        if (!deviceEnumerator) return;
+        IMMDeviceCollection* devices = nullptr;
+        HRESULT hr = deviceEnumerator->EnumAudioEndpoints(eRender, DEVICE_STATE_ACTIVE, &devices);
+        if (FAILED(hr) || !devices) return;
+        UINT count = 0;
+        if (FAILED(devices->GetCount(&count))) {
+            devices->Release();
+            return;
         }
-
-        bool success = false;
-        for (int i = 0; i < sessionCount; i++) {
-            IAudioSessionControl* session = nullptr;
-            hr = sessionEnumerator->GetSession(i, &session);
-            if (FAILED(hr)) continue;
-
-            IAudioSessionControl2* sessionControl2 = nullptr;
-            hr = session->QueryInterface(IID_IAudioSessionControl2, (void**)&sessionControl2);
-            session->Release();
-            if (FAILED(hr)) continue;
-
-            DWORD sessionProcessId = 0;
-            hr = sessionControl2->GetProcessId(&sessionProcessId);
-            if (SUCCEEDED(hr) && sessionProcessId == processId) {
-                ISimpleAudioVolume* audioVolume = nullptr;
-                hr = sessionControl2->QueryInterface(IID_ISimpleAudioVolume, (void**)&audioVolume);
-                if (SUCCEEDED(hr)) {
-                    hr = audioVolume->SetMute(mute ? TRUE : FALSE, nullptr);
-                    if (SUCCEEDED(hr)) {
-                        success = true;
-                    }
-                    audioVolume->Release();
-                }
+        for (UINT i = 0; i < count; i++) {
+            IMMDevice* device = nullptr;
+            hr = devices->Item(i, &device);
+            if (FAILED(hr) || !device) continue;
+            IAudioSessionManager2* sm = nullptr;
+            hr = device->Activate(IID_IAudioSessionManager2, CLSCTX_ALL, nullptr, (void**)&sm);
+            device->Release();
+            if (SUCCEEDED(hr) && sm) {
+                fn(sm);
+                sm->Release();
             }
-            sessionControl2->Release();
         }
+        devices->Release();
+    }
 
-        sessionEnumerator->Release();
-        return success;
+    bool muteProcess(DWORD processId, bool mute) {
+        bool anySuccess = false;
+        EnumerateSessionManagers([&](IAudioSessionManager2* sm) {
+            IAudioSessionEnumerator* sessionEnumerator = nullptr;
+            HRESULT hr = sm->GetSessionEnumerator(&sessionEnumerator);
+            if (FAILED(hr)) return;
+
+            int sessionCount = 0;
+            hr = sessionEnumerator->GetCount(&sessionCount);
+            if (FAILED(hr)) {
+                sessionEnumerator->Release();
+                return;
+            }
+
+            for (int i = 0; i < sessionCount; i++) {
+                IAudioSessionControl* session = nullptr;
+                hr = sessionEnumerator->GetSession(i, &session);
+                if (FAILED(hr)) continue;
+
+                IAudioSessionControl2* sessionControl2 = nullptr;
+                hr = session->QueryInterface(IID_IAudioSessionControl2, (void**)&sessionControl2);
+                session->Release();
+                if (FAILED(hr)) continue;
+
+                DWORD sessionProcessId = 0;
+                hr = sessionControl2->GetProcessId(&sessionProcessId);
+                if (SUCCEEDED(hr) && sessionProcessId == processId) {
+                    ISimpleAudioVolume* audioVolume = nullptr;
+                    hr = sessionControl2->QueryInterface(IID_ISimpleAudioVolume, (void**)&audioVolume);
+                    if (SUCCEEDED(hr)) {
+                        hr = audioVolume->SetMute(mute ? TRUE : FALSE, nullptr);
+                        if (SUCCEEDED(hr)) {
+                            anySuccess = true;
+                        }
+                        audioVolume->Release();
+                    }
+                }
+                sessionControl2->Release();
+            }
+
+            sessionEnumerator->Release();
+        });
+        return anySuccess;
     }
 
     bool hasActiveAudioSession(DWORD processId) {
-        if (!sessionManager) return false;
-
-        IAudioSessionEnumerator* sessionEnumerator = nullptr;
-        HRESULT hr = sessionManager->GetSessionEnumerator(&sessionEnumerator);
-        if (FAILED(hr)) return false;
-
-        int sessionCount = 0;
-        hr = sessionEnumerator->GetCount(&sessionCount);
-        if (FAILED(hr)) {
-            sessionEnumerator->Release();
-            return false;
-        }
-
         bool found = false;
-        for (int i = 0; i < sessionCount; i++) {
-            IAudioSessionControl* session = nullptr;
-            hr = sessionEnumerator->GetSession(i, &session);
-            if (FAILED(hr)) continue;
+        EnumerateSessionManagers([&](IAudioSessionManager2* sm) {
+            IAudioSessionEnumerator* sessionEnumerator = nullptr;
+            HRESULT hr = sm->GetSessionEnumerator(&sessionEnumerator);
+            if (FAILED(hr)) return;
 
-            IAudioSessionControl2* sessionControl2 = nullptr;
-            hr = session->QueryInterface(IID_IAudioSessionControl2, (void**)&sessionControl2);
-            session->Release();
-            if (FAILED(hr)) continue;
-
-            DWORD sessionProcessId = 0;
-            hr = sessionControl2->GetProcessId(&sessionProcessId);
-            if (SUCCEEDED(hr) && sessionProcessId == processId) {
-                found = true;
+            int sessionCount = 0;
+            hr = sessionEnumerator->GetCount(&sessionCount);
+            if (FAILED(hr)) {
+                sessionEnumerator->Release();
+                return;
             }
-            sessionControl2->Release();
-        }
 
-        sessionEnumerator->Release();
+            for (int i = 0; i < sessionCount; i++) {
+                IAudioSessionControl* session = nullptr;
+                hr = sessionEnumerator->GetSession(i, &session);
+                if (FAILED(hr)) continue;
+
+                IAudioSessionControl2* sessionControl2 = nullptr;
+                hr = session->QueryInterface(IID_IAudioSessionControl2, (void**)&sessionControl2);
+                session->Release();
+                if (FAILED(hr)) continue;
+
+                DWORD sessionProcessId = 0;
+                hr = sessionControl2->GetProcessId(&sessionProcessId);
+                if (SUCCEEDED(hr) && sessionProcessId == processId) {
+                    found = true;
+                }
+                sessionControl2->Release();
+            }
+
+            sessionEnumerator->Release();
+        });
         return found;
     }
 };

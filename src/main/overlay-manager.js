@@ -1,7 +1,7 @@
 const { BrowserWindow, screen } = require('electron')
 const fs = require('fs')
 const { createWindowTracker } = require('./window-tracker')
-const { pickOverlayIconPath } = require('./theme-detector')
+const { pickOverlayIconPath, detectOverlayIconTheme } = require('./theme-detector')
 
 function fileToDataUrl(filePath) {
   if (!filePath) return null
@@ -133,7 +133,10 @@ function createOverlayManager(options = {}) {
     showCooldownUntil: 0,
     contentReady: false,
     pendingShow: false,
-    showing: false
+    showing: false,
+    crashCount: 0,
+    lastCrashAt: 0,
+    disabledUntilTs: 0
   }
 
   // Marks the moment the overlay was last considered "active" (cursor over a
@@ -203,6 +206,43 @@ function createOverlayManager(options = {}) {
         console.log('[OVERLAY] performing deferred show after content load')
         performShow()
       }
+    })
+
+    // Resiliência (fix 1.1.2): se o renderer do overlay morrer (ex.: falha
+    // transitória de GPU/launch em builds empacotados, reportada pelo Sentry
+    // como "renderer process exited with launch-failed"), não derrubamos o app:
+    // registramos, destruímos a janela quebrada e deixamos o próximo showAt()
+    // recriá-la. Um backoff evita loop de recriação se a falha for permanente.
+    win.webContents.on('render-process-gone', (_event, details) => {
+      const reason = details && details.reason ? details.reason : 'unknown'
+      console.error('[OVERLAY] overlay renderer gone:', reason)
+      const now = Date.now()
+      if (now - state.lastCrashAt < 8000) {
+        state.crashCount = (state.crashCount || 0) + 1
+      } else {
+        state.crashCount = 1
+      }
+      state.lastCrashAt = now
+
+      if (state.crashCount >= 3) {
+        console.warn('[OVERLAY] repeated renderer crashes — disabling overlay for 60s')
+        state.disabledUntilTs = now + 60000
+        state.crashCount = 0
+      }
+
+      state.contentReady = false
+      state.showing = false
+      state.pendingShow = false
+      state.pendingPayload = null
+
+      try {
+        if (state.window === win && !win.isDestroyed()) {
+          win.destroy()
+        }
+      } catch (_) {
+        // ignore
+      }
+      state.window = null
     })
 
     // Safety net: if did-finish-load never fires (e.g. on a recreated window
@@ -377,6 +417,12 @@ function createOverlayManager(options = {}) {
   }
 
   function showAt(bounds, payload, convertToDip) {
+    // Período de desativação após crashes repetidos do renderer: não criar nem
+    // mostrar o overlay até que o backoff expire (evita loop de recriação).
+    if (state.disabledUntilTs && Date.now() < state.disabledUntilTs) {
+      return
+    }
+
     const win = createWindow()
     if (!bounds) return
 
@@ -600,6 +646,10 @@ function createOverlayManager(options = {}) {
       bounds: snapshot.overlayBounds,
       usingDwmCaptionBounds: snapshot.usingDwmCaptionBounds,
       screenshotAnalysisSource: snapshot.screenshotAnalysisSource,
+      theme: detectOverlayIconTheme(snapshot),
+      captionColorRef: snapshot.captionColorRef,
+      immersiveDarkMode: snapshot.immersiveDarkMode,
+      titlebarLuma: snapshot.titlebarLuma,
       hasIcon: !!payload.iconDataUrl,
       managed
     })
@@ -657,6 +707,8 @@ function createOverlayManager(options = {}) {
   function start() {
     if (process.platform !== 'win32') return
     console.log('[OVERLAY] manager start()')
+    state.disabledUntilTs = 0
+    state.crashCount = 0
     createWindow()
     bindIpc()
 

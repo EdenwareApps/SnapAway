@@ -251,7 +251,10 @@ private:
 
         DWORD processId = static_cast<DWORD>(info[0].As<Napi::Number>().Int32Value());
         
-        HANDLE hProcess = ::OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, FALSE, processId);
+        // PROCESS_QUERY_LIMITED_INFORMATION permite consultar o caminho do
+        // executável mesmo para processos elevados (admin), que de outra forma
+        // seriam pulados na lista por ACCESS_DENIED.
+        HANDLE hProcess = ::OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, processId);
         if (!hProcess) {
             return Napi::String::New(env, "");
         }

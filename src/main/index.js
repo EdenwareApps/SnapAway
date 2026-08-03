@@ -184,21 +184,59 @@ async function runWinRTStartupTask(action) {
     ].join('; ');
     let body;
     if (action === 'get') {
-        body = 'Write-Output $t.State.ToString()';
+        body = [
+            'if ($null -eq $t) { Write-Output "NotFound"; exit 0 }',
+            'Write-Output $t.State.ToString()'
+        ].join('; ');
     } else if (action === 'enable') {
-        body = 'if ($t.State -eq [Windows.ApplicationModel.StartupTaskState]::Disabled) { $eop = $t.RequestEnableAsync(); $et = [System.WindowsRuntimeSystemExtensions]::AsTask($eop); $et.Wait(); Write-Output $et.Result.ToString() } else { Write-Output $t.State.ToString() }';
+        // RequestEnableAsync() pode retornar Disabled de forma transitória na
+        // primeira chamada (principalmente em apps recém-instalados da Store).
+        // Tentamos algumas vezes e sempre emitimos o estado final para que o
+        // chamador nunca receba null/indefinido (fix 1.1.2).
+        body = [
+            'if ($null -eq $t) { Write-Output "NotFound"; exit 0 }',
+            'if ($t.State -eq [Windows.ApplicationModel.StartupTaskState]::Disabled) {',
+            '  for ($i = 0; $i -lt 3; $i++) {',
+            '    try {',
+            '      $eop = $t.RequestEnableAsync()',
+            '      $et = [System.WindowsRuntimeSystemExtensions]::AsTask($eop)',
+            '      $null = $et.Wait(3000)',
+            '      if ($et.Status -eq [System.Threading.Tasks.TaskStatus]::RanToCompletion) {',
+            '        $st = $et.Result',
+            '        Write-Output $st.ToString()',
+            '        if ($st -eq [Windows.ApplicationModel.StartupTaskState]::Enabled -or $st -eq [Windows.ApplicationModel.StartupTaskState]::EnabledByPolicy) { break }',
+            '      } else {',
+            '        Write-Output $t.State.ToString()',
+            '        break',
+            '      }',
+            '    } catch {',
+            '      Write-Output $t.State.ToString()',
+            '      break',
+            '    }',
+            '  }',
+            '} else {',
+            '  Write-Output $t.State.ToString()',
+            '}'
+        ].join('; ');
     } else if (action === 'disable') {
-        body = '$t.Disable(); Write-Output $t.State.ToString()';
+        body = [
+            'if ($null -eq $t) { Write-Output "NotFound"; exit 0 }',
+            'try { $t.Disable() } catch { }',
+            'Write-Output $t.State.ToString()'
+        ].join('; ');
     } else { return null; }
     const script = header + '; ' + body;
     return new Promise((resolve) => {
-        execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], { timeout: 15000, maxBuffer: 1024 * 1024 }, (err, stdout, stderr) => {
+        execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], { timeout: 20000, maxBuffer: 1024 * 1024 }, (err, stdout, stderr) => {
             if (err) {
                 console.warn('[MAIN] WinRT StartupTask (' + action + ') failed:', err.message || err, '| stderr:', (stderr || '').trim().slice(0, 500));
                 resolve(null);
                 return;
             }
-            const result = stdout.trim();
+            // As tentativas podem emitir várias linhas de estado; o resultado
+            // final é sempre a última linha não-vazia do stdout.
+            const lines = String(stdout || '').split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+            const result = lines.length ? lines[lines.length - 1] : '';
             if (!result && stderr && stderr.trim()) {
                 console.warn('[MAIN] WinRT StartupTask (' + action + ') returned empty stdout but stderr:', stderr.trim().slice(0, 500));
             }
@@ -325,9 +363,21 @@ async function askForElevation(actionTitle, details) {
 function hwndToDecimalString(hwndStr) {
     if (!hwndStr) return hwndStr
     const s = String(hwndStr).trim()
-    if (/^0x/i.test(s)) {
+    if (!s) return s
+    // O enumWindows (addon nativo) produz hex SEM prefixo e com preenchimento
+    // (ex.: "000000000004102A" — 16 dígitos). O overlay produz "0x20662".
+    // Já o renderer usa decimal. Regra: trata como hex se tiver prefixo 0x,
+    // letras a-f, ou for um ponteiro de 16 dígitos; senão assume decimal.
+    const hasPrefix = /^0x/i.test(s)
+    // Com prefixo 0x: é hex. Sem prefixo: hex se tiver letras a-f, ou for um
+    // ponteiro de 16 dígitos (enumWindows). Decimal (renderer) não passa.
+    const hexLike = hasPrefix || (
+        /^[0-9a-fA-F]+$/.test(s) &&
+        (/[a-fA-F]/.test(s) || s.length === 16)
+    )
+    if (hexLike) {
         try {
-            return BigInt(s).toString(10)
+            return BigInt(hasPrefix ? s : '0x' + s).toString(10)
         } catch (_) {
             return s
         }
@@ -335,7 +385,153 @@ function hwndToDecimalString(hwndStr) {
     return s
 }
 
+// --- Helper elevado persistente (fix 1.1.2) ---
+// Subir o SnapAwayHelper.exe elevado UMA vez por sessão e reutilizá-lo para
+// todas as ações elevadas evita um prompt de UAC a cada F6. Comunicação por
+// arquivos: request-<uuid>.json → result-<uuid>.json num diretório temporário.
+let elevatedHelperServer = {
+    dir: null,
+    ready: false,
+    starting: false,
+    pid: null
+};
+
+// Consentimento do usuário para elevação no hide em lote (por sessão).
+// REMOVIDO em 1.1.2: o diálogo extra foi descartado — o prompt de UAC é a
+// confirmação (o usuário pediu para ir direto à elevação).
+
+function getElevatedHelperDir() {
+    if (!elevatedHelperServer.dir) {
+        elevatedHelperServer.dir = fs.mkdtempSync(path.join(os.tmpdir(), 'snapaway-elev-'));
+    }
+    return elevatedHelperServer.dir;
+}
+
+async function waitForFile(filePath, timeoutMs) {
+    const start = Date.now();
+    while (Date.now() - start < timeoutMs) {
+        try {
+            if (fs.existsSync(filePath)) return true;
+        } catch (_) { }
+        await new Promise(r => setTimeout(r, 100));
+    }
+    return false;
+}
+
+async function ensureElevatedHelperServer() {
+    if (elevatedHelperServer.ready) {
+        // O servidor pode ter saído por idle/crash — confirma que ainda vive.
+        try {
+            if (fs.existsSync(path.join(elevatedHelperServer.dir, 'ready'))) {
+                return true;
+            }
+        } catch (_) { }
+        elevatedHelperServer.ready = false;
+    }
+    if (elevatedHelperServer.starting) {
+        while (elevatedHelperServer.starting && !elevatedHelperServer.ready) {
+            await new Promise(r => setTimeout(r, 100));
+        }
+        return elevatedHelperServer.ready;
+    }
+
+    const helperPath = resolveHelperPath();
+    if (!helperPath) return false;
+
+    elevatedHelperServer.starting = true;
+    try {
+        const dir = getElevatedHelperDir();
+        try { fs.rmSync(dir, { recursive: true, force: true }); } catch (_) { }
+        try { fs.mkdirSync(dir, { recursive: true }); } catch (_) { }
+
+        try {
+            xsystem.runAsAdmin(helperPath, ['--server', dir], dir);
+        } catch (error) {
+            console.warn('[MAIN] Failed to spawn elevated helper server:', error.message);
+            return false;
+        }
+
+        const ready = await waitForFile(path.join(dir, 'ready'), 15000);
+        if (ready) {
+            try {
+                const pidRaw = fs.readFileSync(path.join(dir, 'pid'), 'utf8').trim();
+                elevatedHelperServer.pid = Number(pidRaw) || null;
+            } catch (_) { }
+            elevatedHelperServer.ready = true;
+            console.log('[MAIN] Elevated helper server ready (pid=' + elevatedHelperServer.pid + ')');
+        } else {
+            console.warn('[MAIN] Elevated helper server did not become ready; falling back to one-shot elevation');
+        }
+    } finally {
+        elevatedHelperServer.starting = false;
+    }
+    return elevatedHelperServer.ready;
+}
+
+async function runElevatedActionViaServer(action, params) {
+    const dir = elevatedHelperServer.dir;
+    const uuid = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    const requestFile = path.join(dir, `request-${uuid}.json`);
+    const resultFile = path.join(dir, `result-${uuid}.json`);
+
+    try {
+        fs.writeFileSync(requestFile, JSON.stringify({ action, ...params }), 'utf8');
+    } catch (error) {
+        console.warn('[MAIN] Failed to write elevated request:', error.message);
+        return { success: false, error: 'HELPER_WRITE_FAILED', message: error.message };
+    }
+
+    const found = await waitForFile(resultFile, 30000);
+    if (!found) {
+        return { success: false, error: 'HELPER_TIMEOUT', message: 'Timeout aguardar helper elevado (servidor)' };
+    }
+    try {
+        const raw = fs.readFileSync(resultFile, 'utf8');
+        const parsed = JSON.parse(raw);
+        return parsed && typeof parsed === 'object' ? parsed : { success: false, error: 'HELPER_INVALID_RESPONSE' };
+    } catch (e) {
+        return { success: false, error: 'HELPER_ERROR', message: e.message };
+    } finally {
+        try { fs.unlinkSync(requestFile); } catch (_) { }
+        try { fs.unlinkSync(resultFile); } catch (_) { }
+    }
+}
+
+function stopElevatedHelperServer() {
+    const server = elevatedHelperServer;
+    if (!server.ready || !server.dir) return;
+    try {
+        const uuid = `quit-${Date.now()}`;
+        fs.writeFileSync(path.join(server.dir, `request-${uuid}.json`), JSON.stringify({ action: 'quit' }), 'utf8');
+    } catch (_) { }
+    server.ready = false;
+    server.pid = null;
+}
+
 async function runElevatedAction(action, params = {}) {
+    // Normaliza HWNDs para decimal (só relevante para ações de janela).
+    const safeParams = { ...params };
+    if (safeParams.hwnd) {
+        safeParams.hwnd = hwndToDecimalString(safeParams.hwnd);
+    }
+    if (safeParams.hwnds) {
+        safeParams.hwnds = String(safeParams.hwnds).split(',').map(h => hwndToDecimalString(h)).join(',');
+    }
+
+    // Prefere o servidor elevado persistente (evita UAC repetido).
+    if (await ensureElevatedHelperServer()) {
+        const result = await runElevatedActionViaServer(action, safeParams);
+        if (result && result.error !== 'HELPER_TIMEOUT') {
+            return result;
+        }
+        console.warn('[MAIN] Elevated helper server path failed, falling back to one-shot elevation');
+    }
+
+    return runElevatedActionOneShot(action, safeParams);
+}
+
+// Caminho antigo (uma invocação elevada por ação). Mantido como fallback.
+async function runElevatedActionOneShot(action, params = {}) {
     const helperPath = resolveHelperPath();
     if (!helperPath) {
         return {
@@ -349,6 +545,9 @@ async function runElevatedAction(action, params = {}) {
     const safeParams = { ...params };
     if (safeParams.hwnd) {
         safeParams.hwnd = hwndToDecimalString(safeParams.hwnd);
+    }
+    if (safeParams.hwnds) {
+        safeParams.hwnds = String(safeParams.hwnds).split(',').map(h => hwndToDecimalString(h)).join(',');
     }
 
     const payload = Buffer.from(JSON.stringify({ action, ...safeParams }), 'utf8').toString('base64');
@@ -392,6 +591,69 @@ async function runElevatedAction(action, params = {}) {
             resolve({ success: false, error: 'HELPER_TIMEOUT', message: 'Timeout aguardar helper elevado' });
         }, maxWait);
     });
+}
+
+// Oculta em lote janelas de processos elevados usando o helper elevado. Pergunta
+// ao usuário uma única vez por lote (o prompt de UAC é o mecanismo real de
+// confirmação da elevação) e faz o bookkeeping de cada janela oculta (fix 1.1.2).
+async function handleElevatedBatchHide(hwnds) {
+    if (!Array.isArray(hwnds) || hwnds.length === 0) return;
+    try {
+        // Vai DIRETO ao UAC — o próprio prompt de elevação é a confirmação.
+        // Sem diálogo de confirmação do app (fix 1.1.2).
+        const decimalHwnds = hwnds.map(h => hwndToDecimalString(h)).join(',');
+        const elevatedResult = await runElevatedAction('hide-window', { hwnds: decimalHwnds });
+        const failed = (elevatedResult && Array.isArray(elevatedResult.failed))
+            ? new Set(elevatedResult.failed.map(f => String(f)))
+            : new Set();
+        // Só as janelas efetivamente ocultadas recebem o bookkeeping; as que
+        // falharam permanecem visíveis e não são marcadas como ocultas.
+        const succeeded = hwnds.filter(h => {
+            const dec = String(hwndToDecimalString(h));
+            return !failed.has(dec) && !failed.has(String(h));
+        });
+        for (const hwndStr of succeeded) {
+            await system.markElevatedHidden(hwndStr);
+        }
+        if (succeeded.length > 0) {
+            console.log('[MAIN] Elevated batch hide succeeded for', succeeded.length, 'of', hwnds.length, 'window(s)');
+        }
+        if (failed.size > 0) {
+            console.warn('[MAIN] Elevated batch hide failed for', failed.size, 'window(s):', Array.from(failed).join(','));
+        }
+    } catch (error) {
+        console.error('[MAIN] Error during elevated batch hide:', error);
+    }
+}
+
+// Restaura em lote janelas de processos elevados via helper elevado e finaliza
+// o bookkeeping (remove do tracking e desmuta) com showSpecificWindow (fix 1.1.2).
+async function handleElevatedBatchShow(hwnds) {
+    if (!Array.isArray(hwnds) || hwnds.length === 0) return;
+    try {
+        const decimalHwnds = hwnds.map(h => hwndToDecimalString(h)).join(',');
+        const elevatedResult = await runElevatedAction('show-window', { hwnds: decimalHwnds });
+        const failed = (elevatedResult && Array.isArray(elevatedResult.failed))
+            ? new Set(elevatedResult.failed.map(f => String(f)))
+            : new Set();
+        // Só finaliza o bookkeeping das janelas efetivamente restauradas; as
+        // que falharam permanecem rastreadas para uma nova tentativa.
+        const succeeded = hwnds.filter(h => {
+            const dec = String(hwndToDecimalString(h));
+            return !failed.has(dec) && !failed.has(String(h));
+        });
+        for (const hwndStr of succeeded) {
+            await system.showSpecificWindow(hwndStr);
+        }
+        if (succeeded.length > 0) {
+            console.log('[MAIN] Elevated batch show succeeded for', succeeded.length, 'of', hwnds.length, 'window(s)');
+        }
+        if (failed.size > 0) {
+            console.warn('[MAIN] Elevated batch show failed for', failed.size, 'window(s):', Array.from(failed).join(','));
+        }
+    } catch (error) {
+        console.error('[MAIN] Error during elevated batch show:', error);
+    }
 }
 
 function normalizeFloatingButtonMode(value) {
@@ -2712,18 +2974,31 @@ const toggleShowHide = (state, source = '', force = false) => {
 
     // Ensure windows are actually hidden/shown when state changes
     if (state === 'hide') {
-        system.hideWindows().then(() => {
+        system.hideWindows().then(async (hideResult) => {
             console.log('[MAIN] Hidden filtered windows (hide-state)');
+            const elevated = hideResult && Array.isArray(hideResult.elevated) ? hideResult.elevated : [];
+            if (elevated.length > 0) {
+                console.log('[MAIN] Batch hide found', elevated.length, 'elevated window(s) to retry via helper');
+                await handleElevatedBatchHide(elevated);
+            }
             captureHideCompleted(source);
             updateNotificationBadge();
         }).catch(error => {
             console.error('[MAIN] Error hiding windows on hide-state:', error);
         });
     } else if (state === 'show') {
-        system.showWindows().then((hadHidden) => {
-            console.log('[MAIN] Restored hidden windows (show-state), hadHidden:', hadHidden);
+        system.showWindows().then(async (showResult) => {
+            const hadHidden = showResult && typeof showResult === 'object' ? !!showResult.hadHidden : !!showResult;
+            const stillHidden = showResult && Array.isArray(showResult.stillHidden) ? showResult.stillHidden : [];
+            console.log('[MAIN] Restored hidden windows (show-state), hadHidden:', hadHidden, 'stillHidden:', stillHidden.length);
             updateNotificationBadge();
             notifyStateChanged();
+
+            // Janelas elevadas não puderam ser restauradas por este processo —
+            // tentamos via helper elevado (fix 1.1.2).
+            if (stillHidden.length > 0) {
+                await handleElevatedBatchShow(stillHidden);
+            }
 
             if (hadHidden) {
                 const revealMethod = getRevealMethodForShowSource(source);
@@ -2962,9 +3237,11 @@ const shortcutAction = (state, source = '', force = false) => {
     // Verifica se a autenticação será necessária
     const shouldAuth = state === 'show' && global.currentState !== 'show' && config.password && force !== true;
 
-    if (state === 'show' && source === 'shortcut') {
-        markRevealHintsLearned(source);
-    }
+    // NOTA (fix 1.1.2): Não chamar markRevealHintsLearned() aqui. Antes, usar o
+    // atalho de "show" (Ctrl+F6) marcava revealHintDismissedForever=true, o que
+    // desmarcava o checkbox "Mostrar dicas de revelação" sem o usuário pedir.
+    // As dicas agora são dispensadas apenas por ação explícita do usuário
+    // (desmarcar o checkbox ou clicar em "Desativar dicas" na notificação).
 
     // Primeiro, executa a funcionalidade show/hide
     toggleShowHide(state, source, force);
@@ -3820,8 +4097,16 @@ ipcMain.handle('set-startup', async (event, enable) => {
                 return { success: true, startupTaskState: state, isEnabled, disabledByUser };
             }
 
-            // PowerShell failed (null). Try Electron API + helper as fallback.
-            console.warn('[MAIN] WinRT StartupTask failed, falling back to Electron API + helper for MSIX');
+            // WinRT falhou (null). Para instalações MSIX/Store, o
+            // app.setLoginItemSettings() do Electron é um no-op, então cair no
+            // fallback abaixo fingiria sucesso sem nunca habilitar a
+            // StartupTask — exatamente o bug relatado na 1.1.1. Reportamos a
+            // falha para a UI mostrar um erro (fix 1.1.2).
+            console.warn('[MAIN] WinRT StartupTask failed for MSIX install; no usable fallback.');
+            return {
+                success: false,
+                message: 'Não foi possível configurar a inicialização automática neste dispositivo. Tente habilitá-la em Configurações > Aplicativos > Inicialização.'
+            };
         }
 
         // Passo 1: Tentar com Electron API nativa (escreve em HKCU, sem elevação necessária)
@@ -4934,6 +5219,7 @@ app.on('activate', () => {
 
 app.on('before-quit', () => {
     stopTitlebarOverlay()
+    stopElevatedHelperServer()
 })
 
 app.on('child-process-gone', (event, details) => {

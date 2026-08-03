@@ -49,8 +49,27 @@ function detectOverlayIconTheme(input) {
   if (captionDark === true) return 'white'
   if (captionDark === false) return 'black'
 
-  if (typeof input?.immersiveDarkMode === 'boolean') {
-    return input.immersiveDarkMode ? 'white' : 'black'
+  // Janelas com moldura DWM (DWMWA_CAPTION_BUTTON_BOUNDS presente): o atributo
+  // immersiveDarkMode é confiável porque o próprio app (ou o DWM) o seta.
+  // Ex.: FileZilla/WMP em tema claro → immersiveDarkMode=false → ícone preto.
+  if (input && input.usingDwmCaptionBounds === true) {
+    if (typeof input.immersiveDarkMode === 'boolean') {
+      return input.immersiveDarkMode ? 'white' : 'black'
+    }
+    // Sem immersive disponível, usa o luma medido como fallback.
+    const luma = Number(input && input.titlebarLuma)
+    if (Number.isFinite(luma)) {
+      return luma < 150 ? 'white' : 'black'
+    }
+    return 'black'
+  }
+
+  // Titlebar CUSTOMIZADA (ex.: FxSound): o DWM não informa nem captionColor
+  // nem immersiveDarkMode (fica false por padrão), então o luma medido do
+  // screenshot é a única fonte confiável da aparência real da barra.
+  const luma = Number(input && input.titlebarLuma)
+  if (Number.isFinite(luma)) {
+    return luma < 150 ? 'white' : 'black'
   }
 
   return 'black'

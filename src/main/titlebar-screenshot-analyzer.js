@@ -114,6 +114,35 @@ function sampleVariance(bitmap, imageWidth, imageHeight, centerX, centerY, radiu
   return Number.isFinite(variance) ? variance : Number.POSITIVE_INFINITY
 }
 
+// Brilho mediano da faixa de titlebar (0-255). Usado para decidir o tema do
+// ícone do overlay em apps com titlebar CUSTOMIZADA (ex.: FxSound), onde o DWM
+// não informa DWMWA_CAPTION_COLOR/immersiveDarkMode. A mediana é robusta a
+// texto/ícones do título; amostramos a faixa central-esquerda, longe dos botões.
+function computeTitlebarLuma(bitmap, imageWidth, imageHeight, windowRect, physicalDisplayBounds, titlebarH) {
+  const winLeft = windowRect.left
+  const winTop = windowRect.top
+  const winWidth = windowRect.right - windowRect.left
+  const bandTop = mapToImagePoint(winLeft + Math.round(winWidth * 0.15), winTop + 1, physicalDisplayBounds, imageWidth, imageHeight)
+  const bandBot = mapToImagePoint(winLeft + Math.round(winWidth * 0.15), winTop + Math.max(1, titlebarH - 2), physicalDisplayBounds, imageWidth, imageHeight)
+  const x0 = mapToImagePoint(winLeft + Math.round(winWidth * 0.12), winTop, physicalDisplayBounds, imageWidth, imageHeight).x
+  const x1 = mapToImagePoint(winLeft + Math.round(winWidth * 0.6), winTop, physicalDisplayBounds, imageWidth, imageHeight).x
+  const xStart = Math.max(0, x0)
+  const xEnd = Math.min(imageWidth - 1, x1)
+  const yStart = Math.max(0, bandTop.y)
+  const yEnd = Math.min(imageHeight - 1, bandBot.y)
+  if (xEnd <= xStart || yEnd <= yStart) return null
+
+  const values = []
+  for (let y = yStart; y <= yEnd; y++) {
+    for (let x = xStart; x <= xEnd; x += 2) {
+      values.push(readPixelGray(bitmap, imageWidth, x, y))
+    }
+  }
+  if (values.length === 0) return null
+  values.sort((a, b) => a - b)
+  return values[Math.floor(values.length / 2)]
+}
+
 function mapToImagePoint(globalX, globalY, displayBounds, imageWidth, imageHeight) {
   const relX = globalX - displayBounds.x
   const relY = globalY - displayBounds.y
@@ -207,6 +236,9 @@ function getApproximateTitlebarAnalysis(input) {
     detectedLeftEnd,
     freeZoneWidth: Math.max(0, detectedCaptionLeft - detectedLeftEnd),
     freePercent: Math.round(Math.max(0, detectedCaptionLeft - detectedLeftEnd) / currentWidth * 100),
+    titlebarLuma: last && last.analysis && Number.isFinite(last.analysis.titlebarLuma)
+      ? last.analysis.titlebarLuma
+      : null,
     source: 'approx-screenshot',
     at: Date.now()
   }
@@ -267,6 +299,9 @@ async function analyzeTitlebarScreenshot(input) {
   const winHeight = windowRect.bottom - windowRect.top
   const searchMinX = Math.round(windowRect.left + Math.max(18, winWidth * 0.38))
 
+  const sampleTitlebarH = Math.max(28, Math.min(36, Math.round(winHeight * 0.045)))
+  const titlebarLuma = computeTitlebarLuma(bitmap, imageWidth, imageHeight, windowRect, physicalDisplayBounds, sampleTitlebarH)
+
   if (captionButtonsRect) {
     // --- Known caption rect: scan leftward from default position for lowest-variance area ---
     const defaultX = Math.round(captionButtonsRect.left - iconSize - defaultGap)
@@ -300,6 +335,7 @@ async function analyzeTitlebarScreenshot(input) {
       overlayOffsetDeltaX: bestX - defaultX,
       source: 'screenshot',
       score: Math.round(bestScore * 100) / 100,
+      titlebarLuma: Number.isFinite(titlebarLuma) ? Math.round(titlebarLuma * 10) / 10 : null,
       at: Date.now()
     }
   }
@@ -663,6 +699,7 @@ async function analyzeTitlebarScreenshot(input) {
       rightLow: Math.round(rightLowThreshold * 100) / 100
     },
     source: fallbackUsed ? 'screenshot-fallback' : 'screenshot-scan',
+    titlebarLuma: Number.isFinite(titlebarLuma) ? Math.round(titlebarLuma * 10) / 10 : null,
     at: Date.now()
   }
 }

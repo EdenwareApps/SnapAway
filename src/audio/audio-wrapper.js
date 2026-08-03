@@ -8,6 +8,8 @@ try {
     const possiblePaths = [
         // Dev: wrapper copied to out/main/audio, addon copied to out/main
         path.join(__dirname, '..', 'audio_addon.node'),
+        // Dev: wrapper duplicated at out/main root, addon at out/main
+        path.join(__dirname, 'audio_addon.node'),
         // Dev: original source location
         path.join(__dirname, 'build', 'Release', 'audio_addon'),
         path.join(__dirname, 'build', 'Release', 'audio_addon.node'),
@@ -16,13 +18,16 @@ try {
         path.join(process.cwd(), 'src', 'audio', 'build', 'Release', 'audio_addon.node'),
         path.join(process.cwd(), 'out', 'main', 'audio_addon.node'),
         path.join(process.cwd(), 'dist', 'audio_addon'),
+        path.join(process.cwd(), 'dist', 'audio_addon.node'),
         path.join(__dirname, '..', '..', 'src', 'audio', 'build', 'Release', 'audio_addon'),
         './index.js',
         // ASAR unpacked paths (only when packaged)
         ...(process.resourcesPath ? [
             path.join(process.resourcesPath, 'app.asar.unpacked', 'src', 'audio', 'build', 'Release', 'audio_addon.node'),
             path.join(process.resourcesPath, 'app.asar.unpacked', 'src', 'audio', 'build', 'Debug', 'audio_addon.node'),
-            path.join(process.resourcesPath, 'app.asar.unpacked', 'out', 'main', 'audio_addon.node')
+            path.join(process.resourcesPath, 'app.asar.unpacked', 'out', 'main', 'audio_addon.node'),
+            path.join(process.resourcesPath, 'app.asar.unpacked', 'dist', 'audio_addon.node'),
+            path.join(process.resourcesPath, 'app.asar', 'dist', 'audio_addon.node')
         ] : [])
     ];
     

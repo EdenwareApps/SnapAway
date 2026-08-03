@@ -321,9 +321,13 @@ async function externalShowWindow(windows, show=false) {
 	console.log('!!! externalShowWindow hungWindows', hungWindows);
 	if(hungWindows.length == 0) return;
 
+    // O worker roda em contexto eval; require relativo resolve errado no build
+    // (out/main/index.js). Usamos o caminho ABSOLUTO do wrapper para o worker
+    // conseguir carregá-lo (fix 1.1.2).
+    const wrapperPath = path.join(__dirname, 'process', 'process-wrapper.js');
     const content = `
         const { parentPort } = require('worker_threads');
-        const ProcessManagerWrapper = require('../process/process-wrapper.js');
+        const ProcessManagerWrapper = require(${JSON.stringify(wrapperPath)});
         const processManager = new ProcessManagerWrapper();
         
         parentPort.on('message', hwnds => {
@@ -684,19 +688,31 @@ async function muteWindowAudio(hwndStr) {
 			console.log('[AUDIO] Audio muting disabled by config');
 			return false;
 		}
-		
-		// Use native audio controller
-		if (nativeAudioController.isAvailable()) {
-			const processInfo = processManager.getWindowThreadProcessId(hwndStr);
-			if (!processInfo || !processInfo.processId) {
-				console.error('[AUDIO] Invalid process ID for HWND:', hwndStr);
+
+		// Se o controlador nativo ainda não estiver pronto (ex.: a inicialização
+		// no boot falhou transitoriamente ou o dispositivo de áudio não estava
+		// disponível), tentamos inicializá-lo lazy antes de desistir (fix 1.1.2).
+		if (!nativeAudioController.isAvailable()) {
+			console.log('[AUDIO] Native audio controller not available — attempting lazy init');
+			try {
+				const initialized = await nativeAudioController.initialize();
+				if (!initialized) {
+					console.log('[AUDIO] Lazy audio init failed, cannot mute');
+					return false;
+				}
+			} catch (initError) {
+				console.error('[AUDIO] Error during lazy audio init:', initError);
 				return false;
 			}
-			return await nativeAudioController.muteProcess(processInfo.processId, true);
 		}
-		
-		console.log('[AUDIO] Native audio controller not available');
-		return false;
+
+		// Use native audio controller
+		const processInfo = processManager.getWindowThreadProcessId(hwndStr);
+		if (!processInfo || !processInfo.processId) {
+			console.error('[AUDIO] Invalid process ID for HWND:', hwndStr);
+			return false;
+		}
+		return await nativeAudioController.muteProcess(processInfo.processId, true);
 	} catch (error) {
 		console.error('[AUDIO] Error muting window audio:', error);
 		return false;
@@ -713,19 +729,30 @@ async function unmuteWindowAudio(hwndStr) {
 			console.log('[AUDIO] Audio unmuting disabled by config');
 			return false;
 		}
-		
-		// Use native audio controller
-		if (nativeAudioController.isAvailable()) {
-			const processInfo = processManager.getWindowThreadProcessId(hwndStr);
-			if (!processInfo || !processInfo.processId) {
-				console.error('[AUDIO] Invalid process ID for HWND:', hwndStr);
+
+		// Mesmo lazy init do mute: garante que o controlador esteja disponível
+		// antes de tentar reverter o estado de áudio (fix 1.1.2).
+		if (!nativeAudioController.isAvailable()) {
+			console.log('[AUDIO] Native audio controller not available — attempting lazy init');
+			try {
+				const initialized = await nativeAudioController.initialize();
+				if (!initialized) {
+					console.log('[AUDIO] Lazy audio init failed, cannot unmute');
+					return false;
+				}
+			} catch (initError) {
+				console.error('[AUDIO] Error during lazy audio init:', initError);
 				return false;
 			}
-			return await nativeAudioController.muteProcess(processInfo.processId, false);
 		}
-		
-		console.log('[AUDIO] Native audio controller not available');
-		return false;
+
+		// Use native audio controller
+		const processInfo = processManager.getWindowThreadProcessId(hwndStr);
+		if (!processInfo || !processInfo.processId) {
+			console.error('[AUDIO] Invalid process ID for HWND:', hwndStr);
+			return false;
+		}
+		return await nativeAudioController.muteProcess(processInfo.processId, false);
 	} catch (error) {
 		console.error('[AUDIO] Error unmuting window audio:', error);
 		return false;
@@ -737,7 +764,8 @@ async function unmuteWindowAudio(hwndStr) {
 
 
 async function hideWindows() {
-	const queue = [], hidden = [];
+	const queue = [], hidden = [], elevated = [];
+	const mutedPids = new Set(); // dedup: mutar 1x por processo, não por janela
 	const zOrderSnapshot = captureZOrderSnapshot();
 	await iterateWindows(async (win) => {
 		const processInfo = processManager.getWindowThreadProcessId(win.hwnd);
@@ -763,10 +791,28 @@ async function hideWindows() {
 				queue.push(win.hwnd);
 			} else {
 				processManager.showWindow(win.hwnd, WindowConstants.SW_HIDE);
+				// Diagnóstico (fix 1.1.2): se a janela continuar visível após
+				// SW_HIDE, o hide falhou — tipicamente o alvo pertence a um
+				// processo elevado (ex.: Roblox/Discord rodando como admin), o
+				// que mantém a presença na barra de tarefas/bandeja.
+				if (processManager.isWindowVisible(win.hwnd)) {
+					console.warn(`[SYSTEM] Window ${win.hwnd} (${win.process}) still visible after SW_HIDE — likely elevated process; reporting for elevated hide`);
+					hiddenWindowZOrder.delete(win.hwnd);
+					elevated.push(win.hwnd);
+					return;
+				}
 				hidden.push(win.hwnd);
 				addHiddenWindow(win.hwnd); // Track hidden window for notification badge
 				if (config.muteWindows) {
 					const processId = processInfo ? processInfo.processId : 0;
+					// Só muta UMA vez por processo (muitas janelas do mesmo PID,
+					// ex.: WMP, gerariam N chamadas de mute redundantes).
+					if (processId && mutedPids.has(processId)) {
+						return;
+					}
+					if (processId) {
+						mutedPids.add(processId);
+					}
 					const hasAudio = await hasActiveAudioSession(processId);
 					console.log(`[AUDIO] Process ${win.process} (PID: ${processId}) has active audio session: ${hasAudio}`);
 					await muteWindowAudio(win.hwnd).catch(error => {
@@ -780,7 +826,10 @@ async function hideWindows() {
 	// Preserve any previously hidden windows so we don't "forget" them if hideWindows runs multiple times
 	const previousHidden = Array.isArray(config.hiddenWindows) ? config.hiddenWindows : [];
 	config.hiddenWindows = [...new Set([...previousHidden, ...queue, ...hidden])];
-	return ret;
+	console.log(`[SYSTEM] hideWindows: hidden=${hidden.length} elevated=${elevated.length} queue=${queue.length} config.hiddenWindows=${config.hiddenWindows.length}`);
+	// Janelas que não puderam ser ocultadas (processo elevado) são retornadas
+	// para o main process tentar via helper elevado (fix 1.1.2).
+	return { elevated };
 }
 
 async function hideSpecificWindow(hwndStr) {
@@ -793,8 +842,12 @@ async function hideSpecificWindow(hwndStr) {
 			console.log(`[SYSTEM] Window ${hwndStr} is hung, cannot hide`);
 			return { success: false, message: 'Window is hung', code: 'WINDOW_HUNG' };
 		} else {
-			const hidden = processManager.showWindow(hwndStr, WindowConstants.SW_HIDE);
-			if (!hidden) {
+			processManager.showWindow(hwndStr, WindowConstants.SW_HIDE);
+			// Verificação real (fix 1.1.2): o retorno de ShowWindow indica o estado
+			// ANTERIOR da janela, não o sucesso do hide. Checamos a visibilidade
+			// após a chamada para detectar falhas (ex.: processo elevado).
+			if (processManager.isWindowVisible(hwndStr)) {
+				console.warn(`[SYSTEM] Window ${hwndStr} still visible after SW_HIDE — failed to hide`);
 				return {
 					success: false,
 					requiresElevation: true,
@@ -824,6 +877,32 @@ async function hideSpecificWindow(hwndStr) {
 	} else {
 		console.log(`[SYSTEM] Window ${hwndStr} is already hidden`);
 		return { success: false, message: 'Window already hidden', code: 'ALREADY_HIDDEN' };
+	}
+}
+
+async function markElevatedHidden(hwndStr) {
+	// Bookkeeping de uma janela que foi ocultada pelo helper ELEVADO (o processo
+	// normal não consegue ocultá-la). Chamado pelo main process após o
+	// runElevatedAction('hide-window') ter sucesso (fix 1.1.2).
+	try {
+		if (!hwndStr || !processManager.isWindow(hwndStr)) {
+			console.warn(`[SYSTEM] markElevatedHidden: invalid HWND ${hwndStr}`);
+			return false;
+		}
+		if (!config.hiddenWindows.includes(hwndStr)) {
+			config.hiddenWindows.push(hwndStr);
+		}
+		addHiddenWindow(hwndStr);
+		if (config.muteWindows) {
+			await muteWindowAudio(hwndStr).catch(error => {
+				console.error('[AUDIO] Error muting elevated-hidden window audio:', error);
+			});
+		}
+		console.log(`[SYSTEM] Marked elevated-hidden window ${hwndStr}`);
+		return true;
+	} catch (error) {
+		console.error('[SYSTEM] Error marking elevated window hidden:', error);
+		return false;
 	}
 }
 
@@ -857,6 +936,7 @@ async function showSpecificWindow(hwndStr) {
 }
 
 async function showWindows() {
+	console.log('[SYSTEM] showWindows entry: config.hiddenWindows =', JSON.stringify(config.hiddenWindows));
 	const queue = [];
 	config.hiddenWindows.forEach(hwndStr => {
 		if (processManager.isWindow(hwndStr)) {
@@ -868,7 +948,11 @@ async function showWindows() {
 	config.hiddenWindows = [];
 	
 	// Sempre procurar por janelas ocultas, independentemente da configuração hideSystemWindows
-	// Isso garante que janelas filtradas sejam sempre restauradas
+	// Isso garante que janelas filtradas sejam sempre restauradas.
+	// hwndOnly=true: restaura apenas janelas com filtro EXPLÍCITO por hwnd (as que
+	// o usuário selecionou/ocultou). Usar "todos os filtros" redescobria janelas
+	// auxiliares invisíveis do WMP (Default IME, DDE Server Window, etc.) e as
+	// mostrava na taskbar após o show (fix 1.1.2 reverteu para hwndOnly).
 	await iterateWindows(win => {
 		if (isWindowHidden(win.hwnd)) {
 			queue.push(win.hwnd);
@@ -894,13 +978,30 @@ async function showWindows() {
 	await externalShowWindow(dedupedQueue, true);
 	dedupedQueue.forEach(hwndStr => hiddenWindowZOrder.delete(hwndStr));
 
+	// Janelas que continuam ocultas após SW_SHOWNA (processo elevado) não podem
+	// ser restauradas por este processo não-elevado. Mantemos o rastreamento e
+	// reportamos para o main process restaurá-las via helper elevado (fix 1.1.2).
+	const stillHidden = dedupedQueue.filter(hwndStr => {
+		return processManager.isWindow(hwndStr) && !processManager.isWindowVisible(hwndStr);
+	});
+
 	// Clear all hidden windows tracking quando mostrar todas as janelas
 	clearHiddenWindows();
+
+	// Re-track janelas que não puderam ser restauradas para não serem perdidas.
+	if (stillHidden.length > 0) {
+		stillHidden.forEach(hwndStr => {
+			if (!config.hiddenWindows.includes(hwndStr)) {
+				config.hiddenWindows.push(hwndStr);
+			}
+			addHiddenWindow(hwndStr);
+		});
+	}
 
 	// Cleanup any stale hidden windows data after attempts to show windows
 	cleanupOrphanedHiddenWindows();
 
-	return hasHiddenWindows;
+	return { hadHidden: hasHiddenWindows, stillHidden };
 }
 
 function updateConfig(newConfig) {
@@ -1021,6 +1122,7 @@ module.exports = {
 	iconFailure,
 	hideWindows,
 	hideSpecificWindow,
+	showSpecificWindow,
 	showWindows,
 	updateConfig,
 	events,
@@ -1045,6 +1147,7 @@ module.exports = {
 	isWindowManaged,
 	enableHideState,
 	enableHideStateForSelected,
+	markElevatedHidden,
 	hasManagedWindows,
 	...processManager
 }

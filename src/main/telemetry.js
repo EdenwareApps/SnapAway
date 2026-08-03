@@ -157,9 +157,11 @@ function sanitizeTelemetryDetails(details) {
   return sanitized;
 }
 
-const SENTRY_EVENT_WHITELIST = new Set([
-  'startup.diagnostics',
-  'gpu.environment',
+// Eventos que representam falhas/diagnósticos e DEVEM virar issue no Sentry.
+// (Eventos informativos como gpu.environment/startup.diagnostics ficam fora
+// desta lista: vão apenas ao log persistente, evitando ruído de issues — o
+// Sentry trataria captureMessage de nível info como um novo issue por boot.)
+const SENTRY_ISSUE_EVENTS = new Set([
   'app.render-process-gone',
   'window.render-process-gone',
   'app.child-process-gone',
@@ -242,7 +244,7 @@ function captureTelemetryEvent(eventName, details = {}, options = {}) {
   const sanitizedDetails = sanitizeTelemetryDetails(details);
   writePersistentTelemetryLog(eventName, sanitizedDetails);
 
-  const shouldSend = options.sendToSentry === true || SENTRY_EVENT_WHITELIST.has(eventName);
+  const shouldSend = options.sendToSentry === true || SENTRY_ISSUE_EVENTS.has(eventName);
   if (shouldSend && isSentryEnabled() && hasSentryClient()) {
     withTelemetryScope(scope => {
       if (scope && typeof scope.setExtras === 'function') {

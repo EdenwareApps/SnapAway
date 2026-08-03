@@ -5,6 +5,7 @@
 #include <sstream>
 #include <algorithm>
 #include <iostream>
+#include <utility>
 
 static std::string Base64Decode(const std::string &in) {
     std::string out;
@@ -49,6 +50,42 @@ static std::string GetArgValue(const std::string &payload, const std::string &ke
     auto quote2 = payload.find('"', quote1 + 1);
     if (quote2 == std::string::npos) return "";
     return payload.substr(quote1 + 1, quote2 - quote1 - 1);
+}
+
+static std::vector<std::string> SplitComma(const std::string &s) {
+    std::vector<std::string> out;
+    std::stringstream ss(s);
+    std::string item;
+    while (std::getline(ss, item, ',')) {
+        if (!item.empty()) out.push_back(item);
+    }
+    return out;
+}
+
+// Resolve a lista de HWNDs a partir de `hwnd` (único) e/ou `hwnds` (lista
+// separada por vírgula, em decimal). Usado por hide-window/show-window para
+// processar várias janelas numa única invocação elevada (um só prompt de UAC).
+static std::vector<std::string> ResolveHwndList(const std::string &payload) {
+    std::vector<std::string> out;
+    std::string single = GetArgValue(payload, "hwnd");
+    std::string list = GetArgValue(payload, "hwnds");
+    if (!single.empty()) out.push_back(single);
+    if (!list.empty()) {
+        auto parts = SplitComma(list);
+        out.insert(out.end(), parts.begin(), parts.end());
+    }
+    return out;
+}
+
+static std::string resultFailedList(const std::string &code, const std::vector<std::string> &failed) {
+    std::ostringstream s;
+    s << "{\"success\":false,\"code\":\"" << code << "\",\"failed\":[";
+    for (size_t i = 0; i < failed.size(); i++) {
+        if (i) s << ",";
+        s << "\"" << failed[i] << "\"";
+    }
+    s << "]}";
+    return s.str();
 }
 
 static std::string resultError(const std::string &code, const std::string &message) {
@@ -101,43 +138,80 @@ static void EnsureDpiAwareness() {
     }
 }
 
-int wmain(int argc, wchar_t *argv[]) {
-    EnsureDpiAwareness();
-    std::wstring targetFile;
-    std::wstring payloadBase64;
+static std::string ReadFileUtf8(const std::wstring &path) {
+    std::ifstream in(Utf16ToUtf8(path), std::ios::in | std::ios::binary);
+    if (!in.is_open()) return "";
+    std::ostringstream ss;
+    ss << in.rdbuf();
+    return ss.str();
+}
 
-    for (int i = 1; i < argc; i++) {
-        std::wstring key = argv[i];
-        if (key == L"--payloadBase64" && i + 1 < argc) {
-            payloadBase64 = argv[++i];
-        } else if (key == L"--resultFile" && i + 1 < argc) {
-            targetFile = argv[++i];
-        }
-    }
+static void WriteReadyFile(const std::wstring &dir) {
+    std::ofstream out(Utf16ToUtf8(dir + L"\\ready"), std::ios::out | std::ios::trunc);
+    if (out.is_open()) out << "1";
+    std::ofstream pidOut(Utf16ToUtf8(dir + L"\\pid"), std::ios::out | std::ios::trunc);
+    if (pidOut.is_open()) pidOut << GetCurrentProcessId();
+}
 
-    if (payloadBase64.empty() || targetFile.empty()) {
-        if (!targetFile.empty()) {
-            WriteResult(targetFile, resultError("INVALID_ARGS", "Argumentos inválidos"));
-        }
-        return 1;
-    }
+// Retorna o primeiro arquivo de pedido encontrado em <dir>\request-*.json.
+static std::pair<std::wstring, std::wstring> FindNextRequest(const std::wstring &dir) {
+    std::wstring pattern = dir + L"\\request-*.json";
+    WIN32_FIND_DATAW fd;
+    HANDLE hFind = FindFirstFileW(pattern.c_str(), &fd);
+    if (hFind == INVALID_HANDLE_VALUE) return { L"", L"" };
+    std::wstring name = fd.cFileName;
+    FindClose(hFind);
+    std::wstring uuid = name;
+    size_t dot = uuid.find(L'.');
+    if (dot != std::wstring::npos) uuid = uuid.substr(0, dot);
+    const std::wstring prefix = L"request-";
+    if (uuid.rfind(prefix, 0) == 0) uuid = uuid.substr(prefix.size());
+    return { dir + L"\\" + name, uuid };
+}
 
-    auto jsonText = Base64Decode(Utf16ToUtf8(payloadBase64));
+// Despacha uma ação (código compartilhado entre o modo one-shot e o servidor).
+static int DispatchAction(const std::string &jsonText, const std::wstring &resultFile) {
+    const std::wstring &targetFile = resultFile;
     std::string action = GetArgValue(jsonText, "action");
 
     if (action == "hide-window") {
-        std::string hwndStr = GetArgValue(jsonText, "hwnd");
-        if (hwndStr.empty()) {
+        auto hwnds = ResolveHwndList(jsonText);
+        if (hwnds.empty()) {
             WriteResult(targetFile, resultError("INVALID_ARGS", "hwnd ausente"));
             return 1;
         }
-        HWND hwnd = (HWND)strtoull(hwndStr.c_str(), nullptr, 10);
-        if (!hwnd || !IsWindow(hwnd)) {
-            WriteResult(targetFile, resultError("INVALID_WINDOW", "HWND inválido"));
+        std::vector<std::string> failed;
+        for (const auto &hs : hwnds) {
+            HWND hwnd = (HWND)strtoull(hs.c_str(), nullptr, 10);
+            if (!hwnd || !IsWindow(hwnd)) { failed.push_back(hs); continue; }
+            ShowWindow(hwnd, SW_HIDE);
+            // ShowWindow retorna a visibilidade ANTERIOR, não sucesso. Checamos
+            // a visibilidade real após a chamada para detectar falha.
+            if (IsWindowVisible(hwnd)) failed.push_back(hs);
+        }
+        if (!failed.empty()) {
+            WriteResult(targetFile, resultFailedList("HIDE_FAILED", failed));
             return 1;
         }
-        if (!ShowWindow(hwnd, SW_HIDE)) {
-            WriteResult(targetFile, resultError("HIDE_FAILED", "Falha ao ocultar janela"));
+        WriteResult(targetFile, resultOk());
+        return 0;
+    }
+
+    if (action == "show-window") {
+        auto hwnds = ResolveHwndList(jsonText);
+        if (hwnds.empty()) {
+            WriteResult(targetFile, resultError("INVALID_ARGS", "hwnd ausente"));
+            return 1;
+        }
+        std::vector<std::string> failed;
+        for (const auto &hs : hwnds) {
+            HWND hwnd = (HWND)strtoull(hs.c_str(), nullptr, 10);
+            if (!hwnd || !IsWindow(hwnd)) { failed.push_back(hs); continue; }
+            ShowWindow(hwnd, SW_SHOWNA);
+            if (!IsWindowVisible(hwnd)) failed.push_back(hs);
+        }
+        if (!failed.empty()) {
+            WriteResult(targetFile, resultFailedList("SHOW_FAILED", failed));
             return 1;
         }
         WriteResult(targetFile, resultOk());
@@ -262,4 +336,64 @@ int wmain(int argc, wchar_t *argv[]) {
 
     WriteResult(targetFile, resultError("UNKNOWN_ACTION", "Ação desconhecida"));
     return 1;
+}
+
+int wmain(int argc, wchar_t *argv[]) {
+    EnsureDpiAwareness();
+    std::wstring targetFile;
+    std::wstring payloadBase64;
+    std::wstring serverDir;
+
+    for (int i = 1; i < argc; i++) {
+        std::wstring key = argv[i];
+        if (key == L"--payloadBase64" && i + 1 < argc) {
+            payloadBase64 = argv[++i];
+        } else if (key == L"--resultFile" && i + 1 < argc) {
+            targetFile = argv[++i];
+        } else if (key == L"--server" && i + 1 < argc) {
+            serverDir = argv[++i];
+        }
+    }
+
+    // Modo servidor: sobe elevado UMA vez por sessão e processa pedidos
+    // (request-<uuid>.json) gravando respostas (result-<uuid>.json), evitando
+    // um prompt de UAC a cada F6. Sai ao receber action "quit" ou por idle.
+    if (!serverDir.empty()) {
+        WriteReadyFile(serverDir);
+        DWORD idleStart = GetTickCount();
+        const DWORD IDLE_TIMEOUT_MS = 10 * 60 * 1000; // 10 min sem pedidos
+        for (;;) {
+            auto req = FindNextRequest(serverDir);
+            if (req.first.empty()) {
+                if (GetTickCount() - idleStart > IDLE_TIMEOUT_MS) {
+                    // Sai por idle; remove o marcador ready para o cliente
+                    // saber que precisa subir um novo servidor.
+                    DeleteFileW((serverDir + L"\\ready").c_str());
+                    return 0;
+                }
+                Sleep(100);
+                continue;
+            }
+            idleStart = GetTickCount();
+            std::wstring resultFile = serverDir + L"\\result-" + req.second + L".json";
+            auto jsonText = ReadFileUtf8(req.first);
+            DeleteFileW(req.first.c_str());
+            if (GetArgValue(jsonText, "action") == "quit") {
+                WriteResult(resultFile, resultOk());
+                DeleteFileW((serverDir + L"\\ready").c_str());
+                return 0;
+            }
+            DispatchAction(jsonText, resultFile);
+        }
+    }
+
+    if (payloadBase64.empty() || targetFile.empty()) {
+        if (!targetFile.empty()) {
+            WriteResult(targetFile, resultError("INVALID_ARGS", "Argumentos inválidos"));
+        }
+        return 1;
+    }
+
+    auto jsonText = Base64Decode(Utf16ToUtf8(payloadBase64));
+    return DispatchAction(jsonText, targetFile);
 }

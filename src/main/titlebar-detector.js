@@ -38,7 +38,10 @@ function pointInsideRect(point, rect) {
 
 function getFallbackCaptionHeight(windowRect) {
   const rough = Math.round(windowRect.height * 0.045)
-  return clamp(rough, 28, 36)
+  // Janelas sem DWMWA_CAPTION_BUTTON_BOUNDS (ex.: WMP) caem no fallback; a
+  // titlebar real costuma ser mais alta que 36px, então ampliamos o teto para
+  // 44px para o hover/overlay não falhar com 'cursor-outside-titlebar'.
+  return clamp(rough, 28, 44)
 }
 
 function buildOverlayBounds(anchorX, anchorY, iconSize) {

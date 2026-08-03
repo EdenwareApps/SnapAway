@@ -343,6 +343,9 @@ function createWindowTracker(options = {}) {
       screenshotAnalysisSource: resolvedScreenshotAnalysis && resolvedScreenshotAnalysis.source
         ? resolvedScreenshotAnalysis.source
         : null,
+      titlebarLuma: resolvedScreenshotAnalysis && Number.isFinite(resolvedScreenshotAnalysis.titlebarLuma)
+        ? resolvedScreenshotAnalysis.titlebarLuma
+        : null,
       captionColorRef: readDword(funcs, geometryHwnd, DWMWA_CAPTION_COLOR)
         ?? readDword(funcs, rootHwnd, DWMWA_CAPTION_COLOR),
       immersiveDarkMode: (() => {
