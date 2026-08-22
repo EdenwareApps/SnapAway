@@ -2,6 +2,7 @@ const { BrowserWindow, screen } = require('electron')
 const fs = require('fs')
 const { createWindowTracker } = require('./window-tracker')
 const { pickOverlayIconPath, detectOverlayIconTheme } = require('./theme-detector')
+const { installNavigationGuards } = require('./navigation-guard')
 
 function fileToDataUrl(filePath) {
   if (!filePath) return null
@@ -134,8 +135,9 @@ function createOverlayManager(options = {}) {
     contentReady: false,
     pendingShow: false,
     showing: false,
-    crashCount: 0,
-    lastCrashAt: 0,
+    // Streak de falhas consecutivas do renderer sem load bem-sucedido (usada
+    // pelo backoff escalonado do render-process-gone — ver ELECTRON-8).
+    rendererCrashStreak: 0,
     disabledUntilTs: 0
   }
 
@@ -193,8 +195,16 @@ function createOverlayManager(options = {}) {
     win.setIgnoreMouseEvents(true, { forward: true })
     win.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(createOverlayHtml())}`)
 
+    // Guarda de navegação: o overlay só deve carregar conteúdo fixo (data:).
+    // Deny-all — bloqueia qualquer navegação renderer-initiated.
+    installNavigationGuards(win)
+
     win.webContents.once('did-finish-load', () => {
       console.log('[OVERLAY] overlay content loaded')
+      // Renderer iniciou com sucesso: zera a streak de falhas e reabilita o
+      // overlay (só falhas SEM load entre elas escalam o backoff).
+      state.rendererCrashStreak = 0
+      state.disabledUntilTs = 0
       state.contentReady = true
       if (state.pendingPayload) {
         win.webContents.send('snapaway-overlay-state', state.pendingPayload)
@@ -212,22 +222,27 @@ function createOverlayManager(options = {}) {
     // transitória de GPU/launch em builds empacotados, reportada pelo Sentry
     // como "renderer process exited with launch-failed"), não derrubamos o app:
     // registramos, destruímos a janela quebrada e deixamos o próximo showAt()
-    // recriá-la. Um backoff evita loop de recriação se a falha for permanente.
+    // recriá-la. Backoff ESCALONADO evita martelar o launch: o backoff antigo
+    // ("3 crashes em 8s") nunca engatava porque a recriação é gated pelo hover
+    // do cursor — crashes espaçados >8s resetavam o contador (ELECTRON-8, 197
+    // eventos). Agora a streak só zera com um load bem-sucedido.
     win.webContents.on('render-process-gone', (_event, details) => {
       const reason = details && details.reason ? details.reason : 'unknown'
-      console.error('[OVERLAY] overlay renderer gone:', reason)
+      const exitCode = details && details.exitCode !== undefined ? details.exitCode : '?'
+      console.error(`[OVERLAY] overlay renderer gone: ${reason} (exitCode ${exitCode})`)
       const now = Date.now()
-      if (now - state.lastCrashAt < 8000) {
-        state.crashCount = (state.crashCount || 0) + 1
-      } else {
-        state.crashCount = 1
-      }
-      state.lastCrashAt = now
 
-      if (state.crashCount >= 3) {
-        console.warn('[OVERLAY] repeated renderer crashes — disabling overlay for 60s')
-        state.disabledUntilTs = now + 60000
-        state.crashCount = 0
+      // Streak de falhas consecutivas sem load bem-sucedido entre elas.
+      state.rendererCrashStreak = (state.rendererCrashStreak || 0) + 1
+
+      // Escalada exponencial: 1º registra (pode ser transitório); 2º+ desliga
+      // com backoff crescente para reduzir os eventos/ruído no Sentry.
+      const delayByStreak = [0, 60 * 1000, 5 * 60 * 1000, 15 * 60 * 1000, 60 * 60 * 1000]
+      const idx = Math.min(state.rendererCrashStreak - 1, delayByStreak.length - 1)
+      const delay = delayByStreak[idx]
+      if (delay > 0) {
+        state.disabledUntilTs = now + delay
+        console.warn(`[OVERLAY] renderer crash streak ${state.rendererCrashStreak} — overlay disabled for ${Math.round(delay / 1000)}s`)
       }
 
       state.contentReady = false
@@ -708,7 +723,7 @@ function createOverlayManager(options = {}) {
     if (process.platform !== 'win32') return
     console.log('[OVERLAY] manager start()')
     state.disabledUntilTs = 0
-    state.crashCount = 0
+    state.rendererCrashStreak = 0
     createWindow()
     bindIpc()
 

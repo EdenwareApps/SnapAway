@@ -44,7 +44,8 @@ class LicenseManager {
             passwordProtection: true,
             audioControl: true,
             advancedShortcuts: true,
-            highPriority: true
+            highPriority: true,
+            hideTrayWhenHidden: true
         };
         
         // Security: Split hash into multiple parts stored in different places
@@ -618,7 +619,8 @@ class LicenseManager {
             passwordProtection: false,
             audioControl: false,
             advancedShortcuts: false,
-            highPriority: false
+            highPriority: false,
+            hideTrayWhenHidden: false
         };
     }
 

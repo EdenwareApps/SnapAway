@@ -80,6 +80,9 @@ process.on('message', async (message) => {
       case 'initStoreContext':
         result = await iap.initStoreContext(...args);
         break;
+      case 'logCustomEvent':
+        result = await iap.logCustomEvent(...args);
+        break;
       case 'getIapStatus':
         result = {
           available: typeof iap.isNativeModuleAvailable === 'function' ? iap.isNativeModuleAvailable() : true,

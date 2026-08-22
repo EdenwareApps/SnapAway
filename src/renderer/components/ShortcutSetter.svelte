@@ -640,6 +640,34 @@ import { createEventDispatcher, onMount } from 'svelte';
       />
     </div>
     <div class="shortcut-container">
+      <label for="hide-tray-when-hidden">{lang.HIDE_TRAY_WHEN_HIDDEN || 'Hide tray icon when hidden'}:</label>
+      <input
+      id="hide-tray-when-hidden"
+      name="hide-tray-when-hidden"
+      type="checkbox"
+      checked={config.hideTrayWhenHidden}
+      on:change={(e) => {
+        if (!isPro) {
+          e.target.checked = !e.target.checked; // reverte o toggle visual
+          showProModalFeature('hideTrayWhenHidden', lang.HIDE_TRAY_WHEN_HIDDEN || 'Hide tray icon when hidden');
+          return;
+        }
+        config.hideTrayWhenHidden = e.target.checked;
+        dispatch('change');
+      }}
+      />
+      <span class="setting-description">
+        {lang.HIDE_TRAY_WHEN_HIDDEN_DESC || 'Removes SnapAway from the system tray while windows are hidden'}
+        &middot;
+        <button type="button" class="tray-guide-link" on:click={() => dispatch('show-tray-guide')}>
+          {lang.TRAY_GUIDE_BUTTON_DESC || 'How to hide the tray icon of other apps'}
+        </button>
+      </span>
+      {#if !isPro}
+        <span class="pro-indicator" on:click={() => showProModalFeature('hideTrayWhenHidden', lang.HIDE_TRAY_WHEN_HIDDEN || 'Hide tray icon when hidden')} on:keydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); showProModalFeature('hideTrayWhenHidden', lang.HIDE_TRAY_WHEN_HIDDEN || 'Hide tray icon when hidden'); } }} role="button" tabindex="0" title={lang.PRO_FEATURE}><i class="fas fa-star" aria-hidden="true"></i>&nbsp;{lang.PRO_FEATURE}</span>
+      {/if}
+    </div>
+    <div class="shortcut-container">
       <label for="password">{lang.PASSWORD}:</label>
       {config.password ? config.password.replace(/./g, '*').slice(0, 4) : '-'}
       &nbsp;&nbsp;
@@ -831,6 +859,25 @@ import { createEventDispatcher, onMount } from 'svelte';
     font-size: inherit;
     font-family: inherit;
     color: inherit;
+  }
+
+  .tray-guide-link {
+    background: none;
+    border: none;
+    padding: 0;
+    margin: 0;
+    font-size: inherit;
+    font-family: inherit;
+    font-weight: 700;
+    /* LinkText é cor de sistema: adapta ao color-scheme forçado pelo app
+       (azul escuro no claro, azul-claro no escuro) — contraste garantido. */
+    color: LinkText;
+    text-decoration: underline;
+    cursor: pointer;
+  }
+
+  .tray-guide-link:hover {
+    filter: brightness(1.15);
   }
   
   .set-password.disabled {

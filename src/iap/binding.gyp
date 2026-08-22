@@ -7,7 +7,8 @@
       "target_name": "iap_addon",
       "sources": ["iap-addon.cpp"],
       "include_dirs": [
-        "<!(node -e \"const p=require('node-addon-api').include; process.stdout.write(p.charCodeAt(0)===34 ? p.slice(1,-1) : p)\")"
+        "<!(node -e \"const p=require('node-addon-api').include; process.stdout.write(p.charCodeAt(0)===34 ? p.slice(1,-1) : p)\")",
+        "winrt"
       ],
       "conditions": [
         [

@@ -16,6 +16,7 @@ app.commandLine.appendSwitch('high-dpi-support', '1');
 const gpuPolicy = require('./gpu-policy');
 const telemetry = require('./telemetry');
 const { createOverlayManager } = require('./overlay-manager')
+const { installNavigationGuards } = require('./navigation-guard');
 const gpuPolicyFlags = gpuPolicy.applyGpuPolicy(app);
 
 if (process.platform === 'win32' && koffi) {
@@ -63,7 +64,9 @@ function requestAuthCheck() {
         console.log('[MAIN] Pending auth check resolver set, sending auth-check event to renderer', !!window?.webContents);
 
         // Send custom auth-check event to renderer to avoid triggering auth-result-response behavior
-        if (window && window.webContents) {
+        // Guard (fix Object-has-been-destroyed): durante o quit a janela pode já
+        // ter sido destruída e `window` continua truthy.
+        if (window && !window.isDestroyed() && window.webContents) {
             // Save current window state so we can restore it after auth even when
             // the auth flow was initiated via auth-check (renderer-driven)
             try {
@@ -78,7 +81,11 @@ function requestAuthCheck() {
                 console.warn('[MAIN] Failed to save window state for auth-check:', e);
             }
 
-            window.webContents.send('auth-check');
+            try {
+                window.webContents.send('auth-check');
+            } catch (e) {
+                console.warn('[MAIN] Failed to send auth-check:', e);
+            }
         }
 
         // Fallback timeout to avoid hanging
@@ -704,7 +711,7 @@ function canAutoFloatOnBlur() {
     if (!shouldShowFloatingButton()) return false;
     if (!config.filters || config.filters.length === 0) return false;
     if (global.currentState === 'hide') return false;
-    if (!global.window) return false;
+    if (!global.window || global.window.isDestroyed()) return false;
     if (!global.window.isVisible() || global.window.isMinimized()) return false;
     if (global.window.isFocused()) return false;
 
@@ -759,9 +766,30 @@ function shouldRestoreFloatModeAfterHide() {
 const licenseManager = require('../license/license.js');
 const iconProcessor = require('../cloak/icon-processor.js');
 const iapModule = require('../iap/index.js');
+const retention = require('./retention');
 const premiumProvider = require('./premium/provider');
 const lang = require('../language/language.js');
 let lastKnownStorePro = false;
+
+// Seam Partner Center (Store Services SDK): se o addon nativo expuser
+// logCustomEvent (Microsoft.Services.Store.Engagement.StoreServicesCustomEventLogger),
+// os eventos de produto também aparecem em "Eventos personalizados" no Partner
+// Center. Sem o SDK, é um no-op silencioso (apenas log persistente).
+if (telemetry && typeof telemetry.setPartnerCenterCustomEventLogger === 'function') {
+    const logCustomEvent = iapModule && typeof iapModule.logCustomEvent === 'function'
+        ? iapModule.logCustomEvent.bind(iapModule)
+        : null;
+    if (logCustomEvent) {
+        telemetry.setPartnerCenterCustomEventLogger((eventName) => {
+            try {
+                Promise.resolve(logCustomEvent(eventName)).catch(() => {});
+            } catch (_) { /* ignore */ }
+        });
+        console.log('[MAIN] Partner Center custom event logger enabled (Store Services SDK).');
+    } else {
+        console.log('[MAIN] Partner Center custom events: Store Services SDK not linked (log persistente ativo).');
+    }
+}
 
 function getPremiumCapabilitiesSnapshot(extraContext = {}) {
     const storeContext = extraContext.storeContext || getStoreInstallContext();
@@ -1005,6 +1033,10 @@ function enforceProCheck() {
                     config.password = null;
                     console.log('[MAIN] Clearing password due to Pro removal');
                 }
+                if (config.hideTrayWhenHidden) {
+                    config.hideTrayWhenHidden = false;
+                    console.log('[MAIN] Revoking hideTrayWhenHidden due to Pro removal');
+                }
             }
             updateConfig(config);
             console.log('[MAIN] Pro status changed:', config.isPro);
@@ -1233,12 +1265,22 @@ if (!locked) {
 
 app.on('second-instance', (event, commandLine, workingDirectory) => {
     console.log('[MAIN] Second instance detected - current state:', global.currentState, 'UI mode:', global.uiMode);
+
+    // Guard (fix ELECTRON-E): se a janela principal já foi destruída (ex.: o
+    // app está encerrando enquanto uma nova instância é iniciada), não tente
+    // operar sobre ela — chamadas a window.* lançariam "Object has been destroyed".
+    if (global.window && global.window.isDestroyed()) {
+        console.warn('[MAIN] second-instance: main window destroyed, skipping UI actions');
+        global.window = null;
+        return;
+    }
+
     if (global.currentState === 'show') {
         console.log('[MAIN] In show-state, displaying main-mode');
         if (global.uiMode === 'float') {
             toggleUIMode('main', 'second-instance');
         }
-        if (window) {
+        if (window && !window.isDestroyed()) {
             if (window.isMinimized()) {
                 window.restore();
             }
@@ -1253,7 +1295,7 @@ app.on('second-instance', (event, commandLine, workingDirectory) => {
             if (global.uiMode === 'float') {
                 toggleUIMode('main', 'second-instance');
             }
-            if (window) {
+            if (window && !window.isDestroyed()) {
                 if (window.isMinimized()) {
                     window.restore();
                 }
@@ -1348,6 +1390,16 @@ function hashPin(pin) {
 }
 
 function createTray() {
+    // If a tray already exists (e.g. recreating after hide), destroy it first
+    if (tray) {
+        try {
+            tray.destroy();
+        } catch (destroyErr) {
+            console.warn('[MAIN] Error destroying previous tray:', destroyErr && destroyErr.message ? destroyErr.message : destroyErr);
+        }
+        tray = null;
+    }
+
     let iconPath = getTrayIconPath() || getDefaultIconPath();
     let trayIcon = getTrayImage(iconPath);
 
@@ -1383,7 +1435,7 @@ function createTray() {
             if (global.uiMode === 'float') {
                 toggleUIMode('main', 'tray-open');
             }
-            if (window) {
+            if (window && !window.isDestroyed()) {
                 if (window.isMinimized()) {
                     window.restore();
                 }
@@ -1406,7 +1458,7 @@ function createTray() {
                 if (global.uiMode === 'float') {
                     toggleUIMode('main', 'tray-open');
                 }
-                if (window) {
+                if (window && !window.isDestroyed()) {
                     if (window.isMinimized()) {
                         window.restore();
                     }
@@ -1429,7 +1481,8 @@ function createTray() {
                 click();
 
                 // Send go-home command to renderer once window is visible
-                if (window && window.webContents) {
+                // Guard (fix ELECTRON-H): evita tocar numa janela já destruída.
+                if (window && !window.isDestroyed() && window.webContents) {
                     try {
                         window.webContents.send('go-home');
                     } catch (err) {
@@ -1445,7 +1498,8 @@ function createTray() {
                 click();
 
                 // Send go-options command to renderer once window is visible
-                if (window && window.webContents) {
+                // Guard (fix ELECTRON-H): evita tocar numa janela já destruída.
+                if (window && !window.isDestroyed() && window.webContents) {
                     try {
                         window.webContents.send('go-options');
                     } catch (err) {
@@ -1467,6 +1521,39 @@ function createTray() {
     const trayTooltip = (config && config.cloakEnabled && config.cloakName) ? config.cloakName : 'SnapAway';
     tray.setToolTip(trayTooltip);
     tray.setContextMenu(contextMenu);
+}
+
+// Hide the tray icon (used by the "Hide tray icon when hidden" option)
+function destroyTray() {
+    if (tray) {
+        try {
+            tray.destroy();
+        } catch (error) {
+            console.warn('[MAIN] Error destroying tray icon:', error && error.message ? error.message : error);
+        }
+        tray = null;
+        console.log('[MAIN] Tray icon destroyed (hideTrayWhenHidden)');
+    }
+}
+
+// Recreate the tray icon if it should be visible
+function ensureTray() {
+    if (!tray && !(global.currentState === 'hide' && config.hideTrayWhenHidden)) {
+        createTray();
+        // Re-apply cloaking (custom tray icon/tooltip) after recreation
+        if (config.cloakEnabled) {
+            applyCloaking();
+        }
+    }
+}
+
+// Sync tray visibility based on hide-state and the hideTrayWhenHidden setting
+function syncTrayVisibility() {
+    if (global.currentState === 'hide' && config.hideTrayWhenHidden) {
+        destroyTray();
+    } else {
+        ensureTray();
+    }
 }
 
 // Function to get license manager
@@ -2143,6 +2230,15 @@ function createWindow() {
         }
     });
 
+    // Limpa a referência global assim que a janela é de fato destruída.
+    // Sem isso, `window` continua apontando para um objeto destruído (truthy),
+    // e os guards `if (window)` passam, mas qualquer chamada lança
+    // "TypeError: Object has been destroyed" (fix ELECTRON-D/ELECTRON-E).
+    window.on('closed', () => {
+        console.log('[MAIN] Window closed (destroyed), clearing global window reference');
+        global.window = null;
+    });
+
     // Controla a visibilidade do floating button baseado no estado da janela principal
     // Listener para quando a janela é minimizada no modo principal
     window.on('blur', () => {
@@ -2362,6 +2458,10 @@ function createWindow() {
 
     createTray();
 
+    // If "hide tray icon when hidden" is enabled and the app was hidden at startup,
+    // remove the tray icon right away.
+    syncTrayVisibility();
+
     // Re-apply tray icon when Windows theme changes (fixes race condition at boot
     // where nativeTheme.shouldUseDarkColors is unstable during first few ms)
     nativeTheme.on('updated', () => {
@@ -2410,6 +2510,30 @@ function createWindow() {
 
     const rendererDevUrl = process.env.ELECTRON_RENDERER_URL;
     const rendererProdPath = path.join(cwd, 'out', 'renderer', 'index.html');
+
+    // Guarda de navegação (hardening): o renderer só pode carregar conteúdo
+    // do próprio app (file:/data:/devtools: ou, em dev, a origem do dev
+    // server). Qualquer navegação externa é bloqueada — impede que um PDF
+    // (PDFium do Chromium) ou página externa entre num renderer. Novas
+    // janelas são negadas; links http(s) abrem no navegador padrão (mesmo
+    // comportamento do launchUrl).
+    installNavigationGuards(window, {
+      openExternalHttp: true,
+      isAllowed(url) {
+        try {
+          const parsed = new URL(url);
+          if (parsed.protocol === 'file:' || parsed.protocol === 'data:' || parsed.protocol === 'devtools:') {
+            return true;
+          }
+          if (rendererDevUrl) {
+            return parsed.origin === new URL(rendererDevUrl).origin;
+          }
+          return false;
+        } catch (_navErr) {
+          return false;
+        }
+      }
+    });
 
     if (rendererDevUrl) {
         console.log('[MAIN] Loading renderer from dev server:', rendererDevUrl);
@@ -2517,11 +2641,23 @@ function createWindow() {
 async function updateConfig(newConfig) {
     const previousLanguage = config.language;
     const previousRevealHintDismissedForever = !!config.revealHintDismissedForever;
+    const previousHideTrayWhenHidden = config.hideTrayWhenHidden;
     const languageChanged = newConfig?.language && newConfig.language !== previousLanguage;
     if (newConfig && Object.prototype.hasOwnProperty.call(newConfig, 'showEmergencyButton')) {
         newConfig.showEmergencyButton = normalizeFloatingButtonMode(newConfig.showEmergencyButton);
     }
     newConfig && Object.assign(config, newConfig);
+
+    // Apply the "hide tray icon when hidden" toggle immediately (even if already hidden)
+    if (newConfig && Object.prototype.hasOwnProperty.call(newConfig, 'hideTrayWhenHidden') && newConfig.hideTrayWhenHidden !== previousHideTrayWhenHidden) {
+        syncTrayVisibility();
+    }
+
+    // Hard Pro gate: never allow "hide tray icon when hidden" without a Pro license
+    if (config.hideTrayWhenHidden && !licenseManager.isFeatureAvailable('hideTrayWhenHidden')) {
+        config.hideTrayWhenHidden = false;
+        syncTrayVisibility();
+    }
 
     if (!previousRevealHintDismissedForever && !!config.revealHintDismissedForever) {
         captureOnboardingTelemetry('onboarding.reveal-hint.dismissed', {
@@ -2579,7 +2715,7 @@ async function updateConfig(newConfig) {
 
     if (languageChanged) {
         await lang.setUserLanguage(newConfig.language);
-        if (window && window.webContents) window.webContents.send('language-change', lang.toObject());
+        if (window && !window.isDestroyed() && window.webContents) window.webContents.send('language-change', lang.toObject());
         // Language change notification removed - no longer needed with unified window
     }
 
@@ -2593,7 +2729,7 @@ async function updateConfig(newConfig) {
     }
 
     const data = config.toObject();
-    if (window && window.webContents) window.webContents.send('config-change', data);
+    if (window && !window.isDestroyed() && window.webContents) window.webContents.send('config-change', data);
     // Config change notification removed - no longer needed with unified window
 
     // Apply cloaking if config changed
@@ -2602,7 +2738,7 @@ async function updateConfig(newConfig) {
 
 // Authentication prompt is now handled through the main window
 const showAuthPrompt = (msg) => {
-    if (window && window.webContents) {
+    if (window && !window.isDestroyed() && window.webContents) {
         // Save current window state before showing auth prompt
         if (window.isVisible() && !window.isMinimized()) {
             const currentSize = window.getSize();
@@ -2650,7 +2786,7 @@ const showAuthPrompt = (msg) => {
 
 // Function to restore window to previous state after authentication
 const restoreWindowAfterAuth = () => {
-    if (window && authWindowSize && authWindowPosition) {
+    if (window && !window.isDestroyed() && authWindowSize && authWindowPosition) {
         console.log('[MAIN] Restoring window after auth to:', authWindowSize.width, 'x', authWindowSize.height, 'at position:', authWindowPosition.x, ',', authWindowPosition.y);
 
         // Use helper to validate, apply and persist restored bounds
@@ -2681,14 +2817,14 @@ const restoreWindowAfterAuth = () => {
 // Function to update notification badge
 const updateNotificationBadge = () => {
     const count = system.getHiddenWindowsCount();
-    if (window && window.webContents) {
+    if (window && !window.isDestroyed() && window.webContents) {
         window.webContents.send('update-notification-badge', count);
     }
 };
 
 // Resize window to authentication dimensions without triggering a full prompt
 const resizeForAuth = () => {
-    if (window && window.webContents) {
+    if (window && !window.isDestroyed() && window.webContents) {
         const { width, height } = screen.getPrimaryDisplay().workAreaSize;
         const authSize = { width: 160, height: 190 };
         const authPosition = {
@@ -2852,6 +2988,17 @@ function captureOnboardingTelemetry(eventName, details = {}) {
     telemetry.captureTelemetryEvent(eventName, payload);
 }
 
+// Eventos de analítica enviados pelo renderer (ex.: retention.pro_modal_viewed).
+ipcMain.on('track-event', (event, payload) => {
+    try {
+        const name = payload && payload.name ? String(payload.name) : '';
+        if (!name) return;
+        retention.trackRetentionEvent(name, (payload && payload.details) || {});
+    } catch (error) {
+        console.warn('[MAIN] track-event handler failed:', error && error.message ? error.message : error);
+    }
+});
+
 function disableRevealHintsFromNotification() {
     if (config.revealHintDismissedForever) return;
     config.revealHintDismissedForever = true;
@@ -2921,12 +3068,23 @@ function captureHideCompleted(source = '') {
         return;
     }
 
-    const nextCount = Number(config.revealHintShownCount || 0) + 1;
+    const previousCount = Number(config.revealHintShownCount || 0);
+    const nextCount = previousCount + 1;
     config.revealHintShownCount = nextCount;
     captureOnboardingTelemetry('onboarding.hide.completed', {
         source,
         hideMode: source
     });
+
+    // Primeiro uso real do recurso central (marco de ativação/retenção).
+    if (previousCount === 0) {
+        retention.trackRetentionEvent('retention.first_hide', {
+            source,
+            hideMode: source,
+            storeInstall: getStoreInstallContext().isStoreInstall
+        });
+    }
+
     maybeShowRevealHint(source);
 }
 
@@ -2956,8 +3114,14 @@ const toggleShowHide = (state, source = '', force = false) => {
     // mesmo se for fechado/aberto novamente.
     config.lastState = state;
 
+    // If "hide tray icon when hidden" is enabled, remove/recreate the tray icon
+    // based on the new hide/show state.
+    syncTrayVisibility();
+
     const notifyStateChanged = () => {
-        if (window && window.webContents) {
+        // Guard (fix Object-has-been-destroyed, ELECTRON-M): durante o quit a
+        // janela pode já ter sido destruída e `window` continua truthy.
+        if (window && !window.isDestroyed() && window.webContents) {
             window.webContents.send('state-changed', global.currentState);
         }
     };
@@ -3023,7 +3187,8 @@ const toggleShowHide = (state, source = '', force = false) => {
             console.error('[MAIN] Error showing windows on show-state:', error);
             // If we failed to show windows, keep the renderer in hide-state
             // to avoid a mismatch between UI and actual protection status.
-            if (window && window.webContents) {
+            // Guard (fix Object-has-been-destroyed): janela pode estar destruída.
+            if (window && !window.isDestroyed() && window.webContents) {
                 window.webContents.send('state-changed', 'hide');
             }
         });
@@ -3042,6 +3207,16 @@ const toggleShowHide = (state, source = '', force = false) => {
 // Função para alternar entre main/float mode (UI) - agora simplificada
 const toggleUIMode = (mode, source = '') => {
     console.log(`[MAIN] Toggle UI mode from ${global.uiMode} to ${mode} (source: ${source})`);
+
+    // Guard (fix ELECTRON-D/ELECTRON-E): se a janela principal foi destruída
+    // (ex.: app encerrando enquanto chega second-instance/minimize), qualquer
+    // chamada a window.* lança "TypeError: Object has been destroyed".
+    // isDestroyed() é seguro de chamar mesmo em janela já destruída.
+    if (global.window && global.window.isDestroyed()) {
+        console.warn('[MAIN] toggleUIMode: window destroyed, skipping UI toggle (source: ' + source + ')');
+        global.window = null;
+        return;
+    }
 
     const forceModeAction = (
         (mode === 'main' && (source === 'floating-button-restore' || source === 'auth-success' || source.startsWith('auth') || source === 'force-float-mode')) ||
@@ -3105,17 +3280,21 @@ const toggleUIMode = (mode, source = '') => {
             if (window && window.webContents) {
                 // Pequeno delay para garantir que a janela esteja pronta
                 setTimeout(() => {
+                    // Re-check: a janela pode ter sido fechada/destruída durante o delay.
+                    if (!window || window.isDestroyed()) {
+                        console.warn('[MAIN] Main-mode resize skipped - window destroyed during 50ms delay');
+                        if (window) global.window = null;
+                        return;
+                    }
                     window.webContents.send('resize-window', mainWindowPosition.x, mainWindowPosition.y, mainWindowSize.width, mainWindowSize.height);
                     // also set bounds so the native window resizes immediately
-                    if (window) {
-                        window.setBounds({
-                            x: mainWindowPosition.x,
-                            y: mainWindowPosition.y,
-                            width: mainWindowSize.width,
-                            height: mainWindowSize.height
-                        });
-                        console.log('[MAIN] Bounds explicitly set when toggling to main mode:', mainWindowSize.width, 'x', mainWindowSize.height, 'at', mainWindowPosition.x, ',', mainWindowPosition.y);
-                    }
+                    window.setBounds({
+                        x: mainWindowPosition.x,
+                        y: mainWindowPosition.y,
+                        width: mainWindowSize.width,
+                        height: mainWindowSize.height
+                    });
+                    console.log('[MAIN] Bounds explicitly set when toggling to main mode:', mainWindowSize.width, 'x', mainWindowSize.height, 'at', mainWindowPosition.x, ',', mainWindowPosition.y);
                 }, 50);
             }
         }
@@ -3155,25 +3334,31 @@ const toggleUIMode = (mode, source = '') => {
         const floatY = height - floatHeight;
 
         setTimeout(() => {
-            // Temporariamente impede resize no modo floating
-            if (window) window.setMinimumSize(buttonSize.width, floatHeight);
-
-            // Envia evento para o renderer redimensionar e posicionar a janela
-            if (window && window.webContents) window.webContents.send('resize-window', x, floatY, buttonSize.width, floatHeight);
-
-            // Force resize in main process to override Windows minimum size limitation
-            if (window) {
-                window.setBounds({
-                    x: x,
-                    y: floatY,
-                    width: buttonSize.width,
-                    height: floatHeight
-                });
-                console.log('[MAIN] Window bounds set to:', buttonSize.width, 'x', floatHeight, 'at', x, ',', floatY);
+            // Re-check window freshness inside the timeout: it may have been
+            // closed/destroyed while we waited (fix ELECTRON-D).
+            if (!window || window.isDestroyed()) {
+                console.warn('[MAIN] Floating mode setup skipped - window destroyed during 100ms delay');
+                if (window) global.window = null;
+                return;
             }
 
-            if (window) window.setAlwaysOnTop(true, 'screen-saver');
-            if (window) window.setSkipTaskbar(true);
+            // Temporariamente impede resize no modo floating
+            window.setMinimumSize(buttonSize.width, floatHeight);
+
+            // Envia evento para o renderer redimensionar e posicionar a janela
+            window.webContents.send('resize-window', x, floatY, buttonSize.width, floatHeight);
+
+            // Force resize in main process to override Windows minimum size limitation
+            window.setBounds({
+                x: x,
+                y: floatY,
+                width: buttonSize.width,
+                height: floatHeight
+            });
+            console.log('[MAIN] Window bounds set to:', buttonSize.width, 'x', floatHeight, 'at', x, ',', floatY);
+
+            window.setAlwaysOnTop(true, 'screen-saver');
+            window.setSkipTaskbar(true);
 
             console.log('[MAIN] Floating mode setup completed');
         }, 100);
@@ -3437,6 +3622,11 @@ ipcMain.handle('request-purchase', async (event, productId) => {
             cwd: process.cwd()
         });
 
+        retention.trackRetentionEvent('retention.purchase_started', {
+            productId: storeProductId,
+            storeInstall: storeContext.isStoreInstall
+        });
+
         const purchaseResult = await iapModule.requestPurchase(storeProductId, hwndLow, hwndHigh);
         console.log('[IAP-IPC] requestPurchase result:', purchaseResult);
         appendIapTrace('ipc.request-purchase.result', {
@@ -3462,6 +3652,12 @@ ipcMain.handle('request-purchase', async (event, productId) => {
 
         // If purchase successful or already owned, re-validate license and restore window
         if (purchaseResult.status === 'Purchased' || purchaseResult.status === 'AlreadyPurchased') {
+            if (purchaseResult.status === 'Purchased') {
+                retention.trackRetentionEvent('retention.purchase_completed', {
+                    productId: storeProductId,
+                    storeInstall: storeContext.isStoreInstall
+                });
+            }
             const licenseInfo = await iapModule.getLicenseInfo();
             config.isPro = licenseInfo.isPro;
             config.ProFeatures = licenseInfo.features || [];
@@ -3490,6 +3686,10 @@ ipcMain.handle('request-purchase', async (event, productId) => {
         return purchaseResult;
     } catch (error) {
         console.error('[IAP-IPC] Error requesting purchase:', error);
+        retention.trackRetentionEvent('retention.purchase_failed', {
+            productId: productId || defaultStoreIapProductId,
+            error: error && error.message ? error.message : String(error)
+        });
         appendIapTrace('ipc.request-purchase.error', {
             productId: productId || defaultStoreIapProductId,
             error: serializeError(error)
@@ -3868,6 +4068,10 @@ ipcMain.handle('deactivate-license', async () => {
         if (config.password) {
             config.password = null;
             console.log('[MAIN] Clearing password due to explicit deactivation');
+        }
+        if (config.hideTrayWhenHidden) {
+            config.hideTrayWhenHidden = false;
+            console.log('[MAIN] Revoking hideTrayWhenHidden due to explicit deactivation');
         }
         updateConfig(config);
 
@@ -4621,6 +4825,18 @@ app.whenReady().then(async () => {
     createWindow();
     startTitlebarOverlay();
 
+    // Analítica de retenção: launch, primeiro launch e marcadores de retorno.
+    try {
+        retention.trackRetentionEvent('retention.launch', {
+            storeInstall: getStoreInstallContext().isStoreInstall,
+            appVersion: app.getVersion ? app.getVersion() : 'unknown'
+        });
+        retention.markFirstLaunchIfNeeded(config);
+        retention.trackReturnOnLaunch(config);
+    } catch (error) {
+        console.warn('[MAIN] Retention tracking failed:', error && error.message ? error.message : error);
+    }
+
     // Initialize license and startup tasks in the background so they do not block initial UI.
     (async () => {
         try {
@@ -5187,10 +5403,11 @@ app.whenReady().then(async () => {
 });
 
 app.on('second-instance', () => {
-    if (window) {
+    if (window && !window.isDestroyed()) {
         if (window.isMinimized()) window.restore();
         window.show();
-    } else { // window is closed
+    } else { // window is closed or destroyed
+        if (window) global.window = null; // limpa referência obsoleta
         app.relaunch();
         app.quit();
     }

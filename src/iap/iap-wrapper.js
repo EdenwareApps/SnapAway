@@ -78,6 +78,7 @@ function loadNativeModuleDirect() {
     requestPurchase: (productId) => ({ status: 'NotPurchased', productId }),
     getProducts: () => [],
     initStoreContext: () => ({ initialized: false, error: 'Native module unavailable' }),
+    logCustomEvent: (name) => ({ logged: false, available: false, error: 'Native module unavailable' }),
     isNativeModuleAvailable: () => false,
     getNativeModuleDiagnostics: () => ({ loaded: false, path: null, error: IapAddonLoadError || 'Native module unavailable' })
   };
@@ -203,12 +204,23 @@ async function initStoreContext() {
   }
 }
 
+async function logCustomEvent(name) {
+  const addon = getDirectNativeAddon();
+  try {
+    return await resolveAddonCall('logCustomEvent', addon.logCustomEvent.bind(addon), name);
+  } catch (error) {
+    console.error('[IAP] logCustomEvent error:', error);
+    return { logged: false, available: false, error: error && error.message ? error.message : String(error) };
+  }
+}
+
 module.exports = {
   checkOwnership,
   getLicenseInfo,
   requestPurchase,
   getProducts,
   initStoreContext,
+  logCustomEvent,
   isNativeModuleAvailable,
   getNativeModuleDiagnostics
 };

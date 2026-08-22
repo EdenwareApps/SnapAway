@@ -354,6 +354,7 @@
   const featureTitleByKey = {
     muteWindows: lang.MUTE_WINDOWS || 'Mute windows when hidden',
     runHighPriority: lang.RUN_HIGH_PRIORITY || 'Run high priority',
+    hideTrayWhenHidden: lang.HIDE_TRAY_WHEN_HIDDEN || 'Hide tray icon when hidden',
     passwordProtection: lang.PASSWORD || 'Password protection',
     cloaking: lang.CLOAKING_LABEL || 'Cloaking',
     customShortcuts: lang.CUSTOM_SHORTCUTS || 'Custom keyboard shortcuts',

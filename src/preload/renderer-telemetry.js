@@ -98,6 +98,13 @@ function initRendererTelemetry() {
   const environment = process.env.NODE_ENV || (process.env.ELECTRON_IS_DEV ? 'development' : 'production');
   const release = process.env.SENTRY_RELEASE || `renderer@${process.versions.electron}`;
 
+  // Enviar ao Sentry apenas em produção (app empacotado). Em desenvolvimento
+  // nada é enviado, evitando ruído de crashs da máquina de dev (ELECTRON-9).
+  if (environment !== 'production') {
+    console.warn('[RENDERER-TELEMETRY] Sentry disabled in development environment.');
+    return;
+  }
+
   Sentry.init({
     dsn,
     release,

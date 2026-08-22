@@ -105,9 +105,50 @@ def fix_appx_package():
             else:
                 fixed_manifest = fixed_manifest.replace('  <Dependencies>', resources_section + '\n  <Dependencies>')
 
+            # Inject Microsoft Store Services SDK activatable class registration
+            # (StoreServicesCustomEventLogger -> Partner Center custom events).
+            # O Path deve apontar para a DLL copiada em app/ (ver bloco abaixo).
+            engagement_ext = (
+                '  <Extensions>\n'
+                '    <Extension Category="windows.activatableClass.inProcessServer">\n'
+                '      <InProcessServer>\n'
+                '        <Path>app/Microsoft.Services.Store.Engagement.dll</Path>\n'
+                '        <ActivatableClass ActivatableClassId="Microsoft.Services.Store.Engagement.StoreServicesCustomEventLogger" ThreadingModel="both" />\n'
+                '      </InProcessServer>\n'
+                '    </Extension>\n'
+                '  </Extensions>\n'
+            )
+            if 'windows.activatableClass.inProcessServer' not in fixed_manifest:
+                if '</Package>' in fixed_manifest:
+                    fixed_manifest = fixed_manifest.replace('</Package>', engagement_ext + '</Package>')
+                else:
+                    fixed_manifest += engagement_ext
+                print('✓ Registro de classe ativável do SDK Engagement injetado no AppxManifest.xml')
+
             with open(manifest_file, 'w', encoding='utf-8') as f:
                 f.write(fixed_manifest)
             print('✓ AppxManifest.xml corrigido para usar valores oficiais do Partner Center')
+
+        # Copy Microsoft Store Services SDK runtime into app/ so that
+        # StoreServicesCustomEventLogger (Partner Center custom events) can be
+        # activated by the InProcessServer registration injected above.
+        # Fonte: src/iap/sdk-runtime (extraído do Extension SDK x64 oficial
+        # Microsoft.Services.Store.Engagement 10.2307.3001).
+        sdk_runtime_dir = project_root / 'src' / 'iap' / 'sdk-runtime'
+        engagement_dll = sdk_runtime_dir / 'Microsoft.Services.Store.Engagement.dll'
+        if engagement_dll.exists():
+            app_dir = temp_dir / 'app'
+            if not app_dir.exists():
+                app_dir.mkdir(parents=True, exist_ok=True)
+            for sdk_file in ['Microsoft.Services.Store.Engagement.dll',
+                             'Microsoft.Services.Store.Engagement.Proxies.dll',
+                             'resources.pri']:
+                src_file = sdk_runtime_dir / sdk_file
+                if src_file.exists():
+                    shutil.copy2(src_file, app_dir / sdk_file)
+                    print(f'✓ SDK Engagement runtime copiado para app/: {sdk_file}')
+        else:
+            print('⚠ SDK Engagement runtime não encontrado em src/iap/sdk-runtime; custom events do Partner Center indisponíveis no pacote')
 
         # Reempacota usando makeappx.exe
         makeappx = find_makeappx()

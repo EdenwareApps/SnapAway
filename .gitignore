@@ -168,3 +168,11 @@ tmp_asar/
 dist/
 /bak
 src/language/texts.backup.json
+
+# Third-party Microsoft Store Engagement SDK (restored from NuGet at build time)
+src/iap/sdk/
+src/iap/sdk-runtime/
+
+# Python bytecode cache
+__pycache__/
+*.pyc

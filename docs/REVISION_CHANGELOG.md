@@ -1,5 +1,27 @@
 # Changelog - Revisão de Implementação Microsoft Store
+## 🚀 1.1.3 (22 de Agosto de 2026)
 
+Microbump `1.1.2 → 1.1.3` com correções de estabilidade baseadas na análise dos issues do Sentry (release `SnapAway@1.1.2`).
+
+### ✅ Correções
+
+1. **"TypeError: Object has been destroyed" (ELECTRON-D/E/H/J/M/N/P)** — `src/main/index.js`
+   - Causa raiz: durante o encerramento, a janela principal é destruída mas a referência `window` (=== `global.window`) segue truthy até o evento `'closed'`; qualquer `if (window)` passava e a chamada lançava.
+   - Fix: guards `!window.isDestroyed()` adicionados em todos os pontos quentes que tocam a janela sem checagem: `requestAuthCheck`, `notifyStateChanged`/`toggleShowHide` (+ catch do show), handler `click()` do tray (2 blocos), itens OPEN/OPTIONS do menu, handlers `second-instance` (2 × 2 blocos), `showAuthPrompt`, `restoreWindowAfterAuth`, `updateNotificationBadge`, `resizeForAuth`, sends de `updateConfig` e `canAutoFloatOnBlur`.
+
+2. **Overlay renderer "launch-failed" em loop (ELECTRON-8, 197 eventos)** — `src/main/overlay-manager.js`
+   - Causa raiz do loop: o backoff antigo ("≥3 crashes em 8s") nunca engatava porque a recriação é gated pelo hover do cursor — crashes espaçados >8s resetavam o contador.
+   - Fix: streak de falhas consecutivas (`rendererCrashStreak`) que só zera em `did-finish-load`/`start()`, com backoff escalonado (60s → 5min → 15min → 1h) e log de `reason` + `exitCode`.
+
+3. **Telemetria Sentry: issues sem título útil (ELECTRON-3, 1186 eventos)** — `src/main/telemetry.js`
+   - Causa: todos os `captureMessage` dos `SENTRY_ISSUE_EVENTS` tinham o mesmo stack (`withTelemetryScope`) e eram agrupados num único issue.
+   - Fix: `scope.setFingerprint([eventName])` em `captureTelemetryEvent` e `captureProductEvent` — cada tipo de evento vira seu próprio issue (ex.: `window.render-process-gone`).
+
+### 🏷️ Versão
+
+- `package.json` / `package-lock.json`: `1.1.2 → 1.1.3` (o `AppxManifest.xml` usa `Version="${version}"` e herda automaticamente).
+
+---
 ## 🔄 Status de Migração de Build (8 de Março de 2026)
 
 - Pipeline antigo com `rollup.config.js` e saída `renderer/dist/bundle.js`/`bundle.css` foi descontinuado.

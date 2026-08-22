@@ -24,6 +24,7 @@ struct __declspec(uuid("3E68D4BD-7135-4D10-8018-9FB6D9F33FA1")) IInitializeWithW
 #include <winrt/Windows.Foundation.h>
 #include <winrt/Windows.Foundation.Collections.h>
 #include <winrt/Windows.System.h>
+#include <winrt/Microsoft.Services.Store.Engagement.h>
 
 using namespace winrt;
 using namespace Windows::Services::Store;
@@ -880,6 +881,79 @@ Napi::Value InitStoreContext(const Napi::CallbackInfo& info) {
   return worker->GetPromise();
 }
 
+// Normaliza o nome do evento para o formato aceito pelo Partner Center
+// (máx. 64 caracteres; letras, dígitos e underscore).
+static std::wstring SanitizeEventName(const std::string& name) {
+  std::wstring out;
+  out.reserve(64);
+  for (char c : name) {
+    if (out.size() >= 64) break;
+    const bool ok = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+                    (c >= '0' && c <= '9') || c == '_';
+    out.push_back(ok ? static_cast<wchar_t>(c) : L'_');
+  }
+  if (out.empty()) {
+    out = L"unknown_event";
+  }
+  return out;
+}
+
+// Envia um custom event ao Partner Center via Microsoft Store Services SDK
+// (Microsoft.Services.Store.Engagement.StoreServicesCustomEventLogger).
+// Síncrono e fire-and-forget (Log() apenas enfileira o envio). Em cópias sem
+// identidade da Microsoft Store (dev/EXE não empacotado), GetDefault() falha
+// com REGDB_E_CLASSNOTREG — tratamos como "não disponível" sem crashar.
+Napi::Value LogCustomEvent(const Napi::CallbackInfo& info) {
+  Napi::Env env = info.Env();
+  Napi::Object result = Napi::Object::New(env);
+
+  if (info.Length() < 1 || !info[0].IsString()) {
+    result.Set("logged", Napi::Boolean::New(env, false));
+    result.Set("available", Napi::Boolean::New(env, false));
+    result.Set("error", Napi::String::New(env, "event name must be a string"));
+    return result;
+  }
+
+  const std::string name = info[0].As<Napi::String>().Utf8Value();
+  const std::wstring eventName = SanitizeEventName(name);
+
+  try {
+    if (!EnsureWinRTApartment()) {
+      result.Set("logged", Napi::Boolean::New(env, false));
+      result.Set("available", Napi::Boolean::New(env, false));
+      result.Set("error", Napi::String::New(env, "WinRT apartment unavailable"));
+      return result;
+    }
+
+    auto logger = winrt::Microsoft::Services::Store::Engagement::StoreServicesCustomEventLogger::GetDefault();
+    if (logger == nullptr) {
+      result.Set("logged", Napi::Boolean::New(env, false));
+      result.Set("available", Napi::Boolean::New(env, false));
+      result.Set("error", Napi::String::New(env, "StoreServicesCustomEventLogger not available"));
+      return result;
+    }
+    logger.Log(winrt::hstring(eventName));
+    result.Set("logged", Napi::Boolean::New(env, true));
+    result.Set("available", Napi::Boolean::New(env, true));
+    result.Set("eventName", Napi::String::New(env, name));
+  } catch (const winrt::hresult_error& e) {
+    result.Set("logged", Napi::Boolean::New(env, false));
+    result.Set("available", Napi::Boolean::New(env, false));
+    result.Set("error", Napi::String::New(env, winrt::to_string(e.message())));
+    result.Set("hresult", Napi::String::New(env, HResultToHex(static_cast<HRESULT>(e.code()))));
+  } catch (const std::exception& e) {
+    result.Set("logged", Napi::Boolean::New(env, false));
+    result.Set("available", Napi::Boolean::New(env, false));
+    result.Set("error", Napi::String::New(env, e.what()));
+  } catch (...) {
+    result.Set("logged", Napi::Boolean::New(env, false));
+    result.Set("available", Napi::Boolean::New(env, false));
+    result.Set("error", Napi::String::New(env, "unknown error"));
+  }
+
+  return result;
+}
+
 // Initialize Native Module
 Napi::Object Init(Napi::Env env, Napi::Object exports) {
   exports.Set(
@@ -905,6 +979,11 @@ Napi::Object Init(Napi::Env env, Napi::Object exports) {
   exports.Set(
     Napi::String::New(env, "initStoreContext"),
     Napi::Function::New(env, InitStoreContext)
+  );
+
+  exports.Set(
+    Napi::String::New(env, "logCustomEvent"),
+    Napi::Function::New(env, LogCustomEvent)
   );
 
   return exports;

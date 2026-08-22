@@ -73,7 +73,26 @@ if ($appxFiles) {
             }
 
             $cert = $null
-            if ($env:APPX_CERT_THUMBPRINT) {
+            # PRIORIDADE 1 (fix 1.1.2): certificado cujo Subject casa com o
+            # Publisher do AppxManifest. A assinatura AppX só é válida se o
+            # sujeito do certificado bater com o Publisher do pacote — por isso
+            # ele tem precedência sobre APPX_CERT_THUMBPRINT/SUBJECT, que podem
+            # apontar para o cert errado (ex.: o do Partner Center), causando
+            # 0x8007000b e deixando o pacote SEM assinatura.
+            if ($publisher) {
+                $cert = @(Get-ChildItem Cert:\CurrentUser\My -ErrorAction SilentlyContinue | Where-Object { $_.Subject -eq $publisher -and $_.HasPrivateKey } | Sort-Object NotAfter -Descending | Select-Object -First 1)
+                if (-not $cert) {
+                    $cert = @(Get-ChildItem Cert:\LocalMachine\My -ErrorAction SilentlyContinue | Where-Object { $_.Subject -eq $publisher -and $_.HasPrivateKey } | Sort-Object NotAfter -Descending | Select-Object -First 1)
+                }
+                if ($cert) {
+                    Write-Host "Usando certificado que casa com o Publisher: $($cert.Subject) [$($cert.Thumbprint)]"
+                } else {
+                    Write-Warning "Nenhum certificado no store com Subject = Publisher ($publisher)."
+                }
+            }
+
+            # PRIORIDADE 2: override explícito por thumbprint (fallback).
+            if (-not $cert -and $env:APPX_CERT_THUMBPRINT) {
                 $thumb = ($env:APPX_CERT_THUMBPRINT -replace '\s','').ToUpperInvariant()
                 $cert = @(Get-ChildItem Cert:\CurrentUser\My -ErrorAction SilentlyContinue | Where-Object { $_.Thumbprint -eq $thumb -and $_.HasPrivateKey } | Select-Object -First 1)
                 if (-not $cert) {
@@ -84,6 +103,7 @@ if ($appxFiles) {
                 }
             }
 
+            # PRIORIDADE 3: override explícito por subject (fallback).
             if (-not $cert -and $env:APPX_CERT_SUBJECT) {
                 $sub = $env:APPX_CERT_SUBJECT
                 $cert = @(Get-ChildItem Cert:\CurrentUser\My -ErrorAction SilentlyContinue | Where-Object { $_.Subject -eq $sub -and $_.HasPrivateKey } | Sort-Object NotAfter -Descending | Select-Object -First 1)
@@ -92,13 +112,6 @@ if ($appxFiles) {
                 }
                 if (-not $cert) {
                     Write-Warning "APPX_CERT_SUBJECT definido, mas certificado não encontrado: $sub"
-                }
-            }
-
-            if (-not $cert -and $publisher) {
-                $cert = @(Get-ChildItem Cert:\CurrentUser\My -ErrorAction SilentlyContinue | Where-Object { $_.Subject -eq $publisher -and $_.HasPrivateKey } | Sort-Object NotAfter -Descending | Select-Object -First 1)
-                if (-not $cert) {
-                    $cert = @(Get-ChildItem Cert:\LocalMachine\My -ErrorAction SilentlyContinue | Where-Object { $_.Subject -eq $publisher -and $_.HasPrivateKey } | Sort-Object NotAfter -Descending | Select-Object -First 1)
                 }
             }
 

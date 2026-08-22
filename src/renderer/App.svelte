@@ -6,6 +6,7 @@
   import ClassList from './components/ClassList.svelte';
   import ShortcutSetter from './components/ShortcutSetter.svelte';
   import TitleFilter from './components/TitleFilter.svelte';
+  import TrayGuideModal from './components/TrayGuideModal.svelte';
   import ProModal from './pro/ProModal.svelte';
 
   let viewFilterCaseSensitive = true;
@@ -41,6 +42,7 @@
   let showProModal = false;
   let proModalFeature = '';
   let proModalFeatureName = '';
+  let showTrayGuide = false;
   let whatToFilterMessages = ['', ''];
   let selectElement; // Reference to the select element for width adjustment
   let ready = false; // Wait for initial state from main process before rendering
@@ -442,11 +444,18 @@
     proModalFeature = '';
     proModalFeatureName = '';
   }
+
+  function handleTrayGuideClose() {
+    showTrayGuide = false;
+  }
   
   function showProModalFor(feature, featureName) {
     proModalFeature = feature || '';
     proModalFeatureName = featureName || '';
     showProModal = true;
+    if (window.api && window.api.trackEvent) {
+      window.api.trackEvent('retention.pro_modal_viewed', { feature: feature || 'generic' });
+    }
   }
 
   function handleLicenseActivated() {
@@ -982,6 +991,7 @@
         on:change={updateConfig} 
         on:go-process-list={() => toggleContainer('filters')}
         on:show-pro-modal={(e) => showProModalFor(e.detail?.feature, e.detail?.featureName)}
+        on:show-tray-guide={() => (showTrayGuide = true)}
         on:deactivate-license={handleLicenseDeactivated}
       />
       <div class="container-back-button footer mini-about">
@@ -1083,6 +1093,9 @@
       on:close={handleProModalClose}
       on:activated={handleLicenseActivated}
     />
+  {/if}
+  {#if showTrayGuide}
+    <TrayGuideModal {lang} on:close={handleTrayGuideClose} />
   {/if}
 </main>
 {/if}

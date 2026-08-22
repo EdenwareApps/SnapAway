@@ -111,6 +111,16 @@ function isSentryEnabled() {
   return !!(process.env.SENTRY_DSN || DEFAULT_SENTRY_DSN);
 }
 
+// Ambiente do Sentry: 'production' quando empacotado (NODE_ENV=production ou
+// sem ELECTRON_IS_DEV), 'development' em execução de desenvolvimento.
+function getTelemetryEnvironment() {
+  return process.env.NODE_ENV || (process.env.ELECTRON_IS_DEV ? 'development' : 'production');
+}
+
+function isProductionEnvironment() {
+  return getTelemetryEnvironment() === 'production';
+}
+
 function getRelease(app) {
   const appVersion = app && typeof app.getVersion === 'function' ? app.getVersion() : process.env.SENTRY_RELEASE || 'unknown';
   const appName = app && typeof app.getName === 'function' ? app.getName() : 'snapaway';
@@ -173,10 +183,14 @@ const SENTRY_ISSUE_EVENTS = new Set([
 function initMainTelemetry(app, options = {}) {
   telemetryApp = app;
   const dsn = process.env.SENTRY_DSN || DEFAULT_SENTRY_DSN;
-  const environment = process.env.NODE_ENV || (process.env.ELECTRON_IS_DEV ? 'development' : 'production');
+  const environment = getTelemetryEnvironment();
   const release = process.env.SENTRY_RELEASE || getRelease(app);
 
-  if (dsn) {
+  // Enviar ao Sentry apenas em produção (app empacotado). Em desenvolvimento
+  // não inicializamos o cliente: nada de JS nem minidumps nativos chega ao
+  // Sentry, evitando ruído como o crash OOM de dev (Sentry ELECTRON-9).
+  // O log persistente iap-telemetry.log continua ativo nos dois casos.
+  if (dsn && isProductionEnvironment()) {
     Sentry.init({
       dsn,
       release,
@@ -211,6 +225,8 @@ function initMainTelemetry(app, options = {}) {
       customTitlebar: true,
       floatingOverlay: true
     });
+  } else if (dsn) {
+    console.warn('[TELEMETRY] Sentry disabled in development environment. Persistent telemetry log is still active.');
   } else {
     console.warn('[TELEMETRY] Sentry disabled because SENTRY_DSN is not configured. Persistent telemetry log is still active.');
   }
@@ -253,6 +269,12 @@ function captureTelemetryEvent(eventName, details = {}, options = {}) {
       if (scope && typeof scope.setTag === 'function') {
         scope.setTag('eventName', eventName);
       }
+      if (scope && typeof scope.setFingerprint === 'function') {
+        // Agrupa cada tipo de evento no seu próprio issue (ex.:
+        // "window.render-process-gone"), em vez de todos caírem num único
+        // issue "withTelemetryScope" (ELECTRON-3) — o stack é idêntico p/ todos.
+        scope.setFingerprint([eventName]);
+      }
       if (scope && typeof scope.setLevel === 'function') {
         scope.setLevel('info');
       }
@@ -260,6 +282,55 @@ function captureTelemetryEvent(eventName, details = {}, options = {}) {
         Sentry.captureMessage(eventName);
       }
     });
+  }
+}
+
+let partnerCenterCustomEventLogger = null;
+
+// Permite plugar um logger nativo de custom events da Microsoft Store (Store
+// Services SDK: Microsoft.Services.Store.Engagement.StoreServicesCustomEventLogger).
+// Quando presente, captureProductEvent também encaminha o evento ao Partner
+// Center (“Eventos personalizados”). Sem o SDK, é um no-op silencioso.
+function setPartnerCenterCustomEventLogger(logger) {
+  partnerCenterCustomEventLogger = typeof logger === 'function' ? logger : null;
+}
+
+// Eventos de produto/analítica (retenção, funil). Sempre gravam no log
+// persistente. Vão ao Sentry apenas se solicitado (sendToSentry=true) — por
+// padrão eventos de retenção NÃO viram issue no Sentry, evitando ruído. Se um
+// logger de custom events da Store estiver plugado, o evento também é
+// encaminhado ao Partner Center.
+function captureProductEvent(eventName, details = {}, options = {}) {
+  const sanitizedDetails = sanitizeTelemetryDetails(details);
+  writePersistentTelemetryLog(eventName, sanitizedDetails);
+
+  if (options.sendToSentry === true && isSentryEnabled() && hasSentryClient()) {
+    withTelemetryScope(scope => {
+      if (scope && typeof scope.setExtras === 'function') {
+        scope.setExtras(sanitizedDetails);
+      }
+      if (scope && typeof scope.setTag === 'function') {
+        scope.setTag('eventName', eventName);
+      }
+      if (scope && typeof scope.setFingerprint === 'function') {
+        // Mesmo agrupamento por nome de evento dos issue events.
+        scope.setFingerprint([eventName]);
+      }
+      if (scope && typeof scope.setLevel === 'function') {
+        scope.setLevel('info');
+      }
+      if (typeof Sentry.captureMessage === 'function') {
+        Sentry.captureMessage(eventName);
+      }
+    });
+  }
+
+  if (typeof partnerCenterCustomEventLogger === 'function') {
+    try {
+      partnerCenterCustomEventLogger(eventName, sanitizedDetails);
+    } catch (error) {
+      console.warn('[TELEMETRY] Failed to log Partner Center custom event:', error && error.message ? error.message : error);
+    }
   }
 }
 
@@ -358,6 +429,8 @@ function captureStartupDiagnostics(app, options = {}) {
 module.exports = {
   initMainTelemetry,
   captureTelemetryEvent,
+  captureProductEvent,
+  setPartnerCenterCustomEventLogger,
   captureTelemetryException,
   setTelemetryContext,
   captureGpuEnvironment,

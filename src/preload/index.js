@@ -213,6 +213,7 @@ contextBridge.exposeInMainWorld('api', {
   onUpdateAvailable: callback => ipcRenderer.on('update-available', callback),
   onIcon: callback => ipcRenderer.on('icon', callback),
   send: (evtName, ...args) => ipcRenderer.send(evtName, ...args),
+  trackEvent: (name, details) => ipcRenderer.send('track-event', { name, details }),
   launchUrl: url => ipcRenderer.invoke('launch-url', url),
   getLanguage: () => ipcRenderer.invoke('get-language'),
   getLanguages: () => ipcRenderer.invoke('get-languages'),
