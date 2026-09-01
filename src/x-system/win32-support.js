@@ -1,6 +1,9 @@
 const koffi = require('koffi');
-const config = require('../config/config.js');
+const fs = require('fs');
+const os = require('os');
 const path = require('path');
+const config = require('../config/config.js');
+const { spawn } = require('child_process');
 
 const user32 = koffi.load('user32.dll');
 const kernel32 = koffi.load('kernel32.dll');
@@ -234,6 +237,13 @@ async function setProcessPriority(above = false) {
 }
 
 function runAsAdmin(executablePath, args = [], workingDirectory = '') {
+    // Instalação MSIX/AppX: o processo do app tem identity de pacote e token
+    // restrito — ShellExecute('runas') NÃO dispara o prompt de UAC. Encaminha a
+    // elevação por uma cópia desempacotada do helper (fora do pacote).
+    if (isPackagedAppxInstall()) {
+        return runAsAdminViaUnpackagedRelay(executablePath, args, workingDirectory);
+    }
+
     const quotedArgs = args.map(arg => `"${String(arg).replace(/"/g, '\\"')}"`).join(' ');
     const result = ShellExecuteA(null, 'runas', executablePath, quotedArgs, workingDirectory || '', WindowConstants.SW_HIDE);
 
@@ -242,6 +252,104 @@ function runAsAdmin(executablePath, args = [], workingDirectory = '') {
     }
 
     return result;
+}
+
+// --- Elevação em instalação empacotada (MSIX/AppX) ---
+// Processos com identity de pacote não conseguem disparar um prompt de UAC:
+// o ShellExecute('runas') falha silenciosamente (sem prompt) porque o token é
+// restrito/não-elevável. A solução padrão é um "broker" DESEMPACOTADO:
+// copiamos o SnapAwayHelper.exe para fora do pacote (%LOCALAPPDATA%\SnapAway\bin)
+// e a cópia pede a própria elevação (modo --relayRunas no SnapAwayHelper.cpp).
+// Sem identity de pacote, o prompt de UAC aparece normalmente e a instância
+// elevada executa a ação real.
+
+// Detecta instalação empacotada pela presença de identity/WindowsApps.
+function isPackagedAppxInstall() {
+    if (process.windowsStore) return true;
+    const execPath = process.execPath || '';
+    const resourcesPath = process.resourcesPath || '';
+    return execPath.includes('\\WindowsApps\\') || resourcesPath.includes('\\WindowsApps\\');
+}
+
+function getUnpackagedHelperDir() {
+    const localAppData = process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local');
+    return path.join(localAppData, 'SnapAway', 'bin');
+}
+
+// Garante uma cópia desempacotada do helper e retorna o caminho. Recopia se o
+// tamanho ou timestamp do binário do pacote mudar (ex.: atualização do app).
+function ensureUnpackagedHelperCopy(sourcePath) {
+    const dir = getUnpackagedHelperDir();
+    fs.mkdirSync(dir, { recursive: true });
+    const destPath = path.join(dir, path.basename(sourcePath));
+    try {
+        const srcStat = fs.statSync(sourcePath);
+        let needCopy = true;
+        try {
+            const dstStat = fs.statSync(destPath);
+            needCopy = dstStat.size !== srcStat.size || dstStat.mtimeMs !== srcStat.mtimeMs;
+        } catch (_) { /* destino ausente */ }
+        if (needCopy) {
+            fs.copyFileSync(sourcePath, destPath);
+        }
+    } catch (error) {
+        throw new Error(`Falha ao preparar cópia desempacotada do helper: ${error.message}`);
+    }
+    return destPath;
+}
+
+// Spawna a cópia desempacotada em modo --relayRunas e aguarda o desfecho do
+// prompt de UAC (a cópia grava --relayStatus com ok:true/false assim que o
+// ShellExecute('runas') retorna). Lança erro se a elevação for negada/falhar,
+// preservando o contrato de erro dos callers (HELPER_ELEVATION_FAILED etc.).
+function runAsAdminViaUnpackagedRelay(executablePath, args = [], workingDirectory = '') {
+    const relayPath = ensureUnpackagedHelperCopy(executablePath);
+    const statusFile = path.join(os.tmpdir(), `snapaway-relay-${Date.now()}-${Math.random().toString(16).slice(2)}.json`);
+    const relayArgs = ['--relayRunas', '--relayStatus', statusFile, ...args];
+
+    return new Promise((resolve, reject) => {
+        const child = spawn(relayPath, relayArgs, {
+            cwd: workingDirectory || path.dirname(relayPath),
+            stdio: 'ignore',
+            windowsHide: true
+        });
+
+        let settled = false;
+        const timeout = setTimeout(() => {
+            if (settled) return;
+            settled = true;
+            try { child.kill(); } catch (_) { }
+            try { fs.unlinkSync(statusFile); } catch (_) { }
+            reject(new Error('Timeout aguardar resposta da elevação (relay)'));
+        }, 45000);
+
+        child.on('error', (err) => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timeout);
+            try { fs.unlinkSync(statusFile); } catch (_) { }
+            reject(new Error(`Falha ao iniciar relay de elevação: ${err.message}`));
+        });
+
+        child.on('exit', (code) => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timeout);
+            let ok = null;
+            try {
+                if (fs.existsSync(statusFile)) {
+                    const parsed = JSON.parse(fs.readFileSync(statusFile, 'utf8'));
+                    ok = parsed && parsed.ok === true;
+                }
+            } catch (_) { /* arquivo ausente/corrompido */ }
+            try { fs.unlinkSync(statusFile); } catch (_) { }
+            if (ok === false || (ok === null && code !== 0)) {
+                reject(new Error('Elevação negada ou falhou'));
+                return;
+            }
+            resolve(0);
+        });
+    });
 }
 
 module.exports = {

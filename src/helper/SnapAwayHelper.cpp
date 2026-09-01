@@ -1,4 +1,5 @@
 #include <windows.h>
+#include <shellapi.h>
 #include <string>
 #include <vector>
 #include <fstream>
@@ -340,6 +341,62 @@ static int DispatchAction(const std::string &jsonText, const std::wstring &resul
 
 int wmain(int argc, wchar_t *argv[]) {
     EnsureDpiAwareness();
+
+    // --- Modo relay (instalação MSIX/AppX) ---
+    // Processos empacotados têm token restrito e NÃO disparam o prompt de UAC
+    // via ShellExecute('runas'). O app copia este helper para fora do pacote
+    // (%LOCALAPPDATA%\SnapAway\bin) e o inicia com --relayRunas: esta cópia,
+    // sem identity de pacote, pede a própria elevação aqui. Se aprovado, a
+    // instância elevada (iniciada pelo UAC) processa a ação real.
+    for (int i = 1; i < argc; i++) {
+        if (wcscmp(argv[i], L"--relayRunas") == 0) {
+            std::wstring relayStatus;
+            std::vector<std::wstring> relayArgs;
+            for (int j = 1; j < argc; j++) {
+                if (wcscmp(argv[j], L"--relayRunas") == 0) continue;
+                if (wcscmp(argv[j], L"--relayStatus") == 0 && j + 1 < argc) {
+                    relayStatus = argv[++j];
+                    continue;
+                }
+                relayArgs.push_back(argv[j]);
+            }
+
+            // Monta a linha de comando (com aspas quando necessário) para passar
+            // ao ShellExecuteW como lpParameters.
+            std::wstring cmdline;
+            for (size_t j = 0; j < relayArgs.size(); j++) {
+                const std::wstring &arg = relayArgs[j];
+                const bool needQuote = arg.empty()
+                    || arg.find(L' ') != std::wstring::npos
+                    || arg.find(L'\t') != std::wstring::npos;
+                if (j > 0) cmdline += L' ';
+                if (needQuote) {
+                    cmdline += L'"';
+                    for (wchar_t c : arg) {
+                        if (c == L'"') cmdline += L"\\\"";
+                        else cmdline += c;
+                    }
+                    cmdline += L'"';
+                } else {
+                    cmdline += arg;
+                }
+            }
+
+            wchar_t exePath[MAX_PATH] = { 0 };
+            GetModuleFileNameW(NULL, exePath, MAX_PATH);
+
+            // Bloqueia até o usuário responder ao UAC; depois gravamos o status
+            // para o app saber se a elevação foi aprovada ou negada.
+            HINSTANCE h = ShellExecuteW(NULL, L"runas", exePath, cmdline.c_str(), NULL, SW_HIDE);
+            const bool ok = ((INT_PTR)h) > 32;
+            if (!relayStatus.empty()) {
+                if (ok) WriteResult(relayStatus, "{\"ok\":true}");
+                else WriteResult(relayStatus, "{\"ok\":false,\"message\":\"Elevação negada ou falhou\"}");
+            }
+            return ok ? 0 : 1;
+        }
+    }
+
     std::wstring targetFile;
     std::wstring payloadBase64;
     std::wstring serverDir;

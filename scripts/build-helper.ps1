@@ -32,12 +32,12 @@ try {
 
     if (Test-Path $vcvarsall) {
         # Usa cl via PATH após vcvarsall para evitar mspdbcore.dll não encontrado
-        $cmd = "`"$vcvarsall`" x64 && cl /nologo /EHsc /std:c++17 /O2 `"SnapAwayHelper.cpp`" /Fe:`"SnapAwayHelper.exe`" /link user32.lib advapi32.lib"
+        $cmd = "`"$vcvarsall`" x64 && cl /nologo /EHsc /std:c++17 /O2 `"SnapAwayHelper.cpp`" /Fe:`"SnapAwayHelper.exe`" /link user32.lib advapi32.lib shell32.lib"
         $psResult = cmd /c $cmd
         $exitCode = $LASTEXITCODE
         Write-Host $psResult
     } else {
-        & "$clPath" /nologo /EHsc /std:c++17 /O2 "SnapAwayHelper.cpp" /Fe:"SnapAwayHelper.exe" /link user32.lib advapi32.lib
+        & "$clPath" /nologo /EHsc /std:c++17 /O2 "SnapAwayHelper.cpp" /Fe:"SnapAwayHelper.exe" /link user32.lib advapi32.lib shell32.lib
         $exitCode = $LASTEXITCODE
     }
 

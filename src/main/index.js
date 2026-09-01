@@ -334,7 +334,13 @@ function readIapTraceTail(maxLines = IAP_TRACE_MAX_LINES) {
 function getHelperCandidates() {
     const candidates = [];
     if (process.resourcesPath) {
+        // extraResources preserva o caminho relativo: o electron-builder coloca o
+        // helper em resources\src\helper\SnapAwayHelper.exe (ver
+        // scripts/sign-win-unpacked.ps1). O primeiro cobre um layout plano; o
+        // segundo cobre o layout real do pacote. Sem isso, o app empacotado
+        // nunca encontra o helper (HELPER_NOT_FOUND, sem UAC, sem ocultar).
         candidates.push(path.join(process.resourcesPath, 'SnapAwayHelper.exe'));
+        candidates.push(path.join(process.resourcesPath, 'src', 'helper', 'SnapAwayHelper.exe'));
     }
     candidates.push(path.join(process.cwd(), 'dist', 'SnapAwayHelper.exe'));
     candidates.push(path.join(process.cwd(), 'SnapAwayHelper.exe'));
@@ -452,7 +458,7 @@ async function ensureElevatedHelperServer() {
         try { fs.mkdirSync(dir, { recursive: true }); } catch (_) { }
 
         try {
-            xsystem.runAsAdmin(helperPath, ['--server', dir], dir);
+            await xsystem.runAsAdmin(helperPath, ['--server', dir], dir);
         } catch (error) {
             console.warn('[MAIN] Failed to spawn elevated helper server:', error.message);
             return false;
@@ -562,7 +568,7 @@ async function runElevatedActionOneShot(action, params = {}) {
     const args = ['--payloadBase64', payload, '--resultFile', resultFile];
 
     try {
-        xsystem.runAsAdmin(helperPath, args, path.dirname(helperPath));
+        await xsystem.runAsAdmin(helperPath, args, path.dirname(helperPath));
     } catch (error) {
         return {
             success: false,
@@ -1061,6 +1067,7 @@ let autoFloatBlurTimer = null;
 let autoFloatPaused = false;
 let mainWindowSize = { width: 640, height: 550 }; // Tamanho padrão da janela principal
 let mainWindowPosition = { x: 100, y: 100 }; // Posição padrão da janela principal // Rastreia o estado anterior da janela
+let lastNormalWindowBounds = null; // Guarda o tamanho/posição antes da maximização para restaurar corretamente
 let authWindowSize = null; // Tamanho da janela antes da autenticação
 let authWindowPosition = null; // Posição da janela antes da autenticação
 let titlebarOverlayManager = null
@@ -1168,6 +1175,20 @@ function getDefaultIconPath() {
     }
 
     return null;
+}
+
+// Converte um caminho de ícone numa NativeImage. `nativeImage.createFromPath`
+// lida com arquivos dentro do app.asar — ao contrário do campo `icon`/`setIcon`
+// do BrowserWindow, que recebem o path cru e falham com "Failed to load image
+// from path" (fix ELECTRON-12). Devolve undefined se não conseguir carregar.
+function toNativeIcon(iconPath) {
+    if (!iconPath) return undefined;
+    try {
+        const img = nativeImage.createFromPath(iconPath);
+        return img && !img.isEmpty() ? img : undefined;
+    } catch (_) {
+        return undefined;
+    }
 }
 
 function getTrayIconPath() {
@@ -2144,8 +2165,12 @@ function createWindow() {
 
     const windowIcon = getDefaultIconPath() || path.join(__dirname, '..', 'renderer', 'assets', 'images', 'default-icon.png');
 
+    // Fix ELECTRON-12: o campo `icon` recebe o path cru e não lê dentro do
+    // app.asar — converte para NativeImage (aware-de-asar) antes de passar.
+    const windowIconImage = toNativeIcon(windowIcon);
+
     global.window = new BrowserWindow({
-        icon: windowIcon,
+        icon: windowIconImage,
         width: mainWindowSize.width,
         height: mainWindowSize.height,
         minWidth: 20,
@@ -2559,7 +2584,10 @@ function createWindow() {
     window.setMenu(null);
     const defaultWindowIcon = getDefaultIconPath();
     if (defaultWindowIcon) {
-        window.setIcon(defaultWindowIcon);
+        const defaultWindowIconImage = toNativeIcon(defaultWindowIcon);
+        if (defaultWindowIconImage) {
+            window.setIcon(defaultWindowIconImage);
+        }
     }
     window.setBackgroundColor('#00000000');
 
@@ -4424,8 +4452,8 @@ ipcMain.handle('toggle-maximize', async (event) => {
             isRestoring = true;
             console.log('[MAIN] Setting isRestoring flag to true');
 
-            // Get the size BEFORE maximizing (from config, not from mainWindowSize which might be maximized)
-            // Check if mainWindowSize looks like a maximized size
+            // Prefer the last known normal (non-maximized) bounds instead of the
+            // current maximized size held in mainWindowSize/mainWindowPosition.
             const workArea = screen.getPrimaryDisplay().workArea;
             const tolerance = 50;
             const savedSizeLooksMaximized = mainWindowSize &&
@@ -4434,17 +4462,37 @@ ipcMain.handle('toggle-maximize', async (event) => {
 
             let restoreSize, restorePosition;
 
-            if (savedSizeLooksMaximized) {
-                // If saved size looks maximized, use defaults
-                console.log('[MAIN] Saved size appears to be maximized, using defaults');
-                restoreSize = { width: 640, height: 550 };
+            const fallbackRestore = () => {
                 const { width, height } = screen.getPrimaryDisplay().workAreaSize;
-                restorePosition = { x: width - 640 - 18, y: height - 550 };
+                return {
+                    size: { width: 640, height: 550 },
+                    position: { x: width - 640 - 18, y: height - 550 }
+                };
+            };
+
+            const preferredNormalBounds = lastNormalWindowBounds || {
+                size: mainWindowSize || { width: 640, height: 550 },
+                position: mainWindowPosition || { x: 100, y: 100 }
+            };
+
+            if (savedSizeLooksMaximized && lastNormalWindowBounds) {
+                console.log('[MAIN] Saved main bounds look maximized; restoring to last known normal bounds');
+                restoreSize = lastNormalWindowBounds.size;
+                restorePosition = lastNormalWindowBounds.position;
+            } else if (savedSizeLooksMaximized) {
+                console.log('[MAIN] Saved size appears to be maximized, using defaults');
+                const fallback = fallbackRestore();
+                restoreSize = fallback.size;
+                restorePosition = fallback.position;
+            } else if (lastNormalWindowBounds) {
+                console.log('[MAIN] Restoring to last normal bounds captured before maximize');
+                restoreSize = lastNormalWindowBounds.size;
+                restorePosition = lastNormalWindowBounds.position;
             } else {
                 // Use saved size or defaults
-                restoreSize = mainWindowSize || { width: 640, height: 550 };
+                restoreSize = preferredNormalBounds.size;
                 const { width, height } = screen.getPrimaryDisplay().workAreaSize;
-                restorePosition = mainWindowPosition || { x: width - 640 - 18, y: height - 550 };
+                restorePosition = preferredNormalBounds.position || { x: width - 640 - 18, y: height - 550 };
             }
 
             console.log('[MAIN] Restoring window from maximized state');
@@ -4516,21 +4564,28 @@ ipcMain.handle('toggle-maximize', async (event) => {
 
             console.log('[MAIN] Window restore initiated');
         } else {
-            // Before maximizing, save the current size and position
+            // Before maximizing, save the current size and position to a dedicated
+            // "normal bounds" snapshot. This avoids reusing the maximized geometry
+            // when the user restores the window afterwards.
             const currentSize = window.getSize();
             const currentPosition = window.getPosition();
 
-            // Only save if not already maximized size
             const workArea = screen.getPrimaryDisplay().workArea;
             const tolerance = 50;
             const isMaximizedSize = currentSize[0] >= workArea.width - tolerance ||
                 currentSize[1] >= workArea.height - tolerance;
 
             if (!isMaximizedSize) {
+                lastNormalWindowBounds = {
+                    size: { width: currentSize[0], height: currentSize[1] },
+                    position: { x: currentPosition[0], y: currentPosition[1] }
+                };
+
                 // Persist current bounds via helper to ensure validation and consistent saving
                 setMainWindowBounds({ width: currentSize[0], height: currentSize[1] }, { x: currentPosition[0], y: currentPosition[1] }, { applyToWindow: false, save: true });
                 console.log('[MAIN] Saved window size before maximizing (via helper):', mainWindowSize);
                 console.log('[MAIN] Saved window position before maximizing (via helper):', mainWindowPosition);
+                console.log('[MAIN] Saved last normal window bounds before maximize:', lastNormalWindowBounds);
             } else {
                 console.log('[MAIN] Window already at maximized size, not saving');
             }

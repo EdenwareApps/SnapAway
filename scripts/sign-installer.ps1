@@ -6,20 +6,19 @@ $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $distDir = Resolve-Path -Path (Join-Path $scriptDir '..\dist') -ErrorAction SilentlyContinue
 
 if ($env:SKIP_PE_SIGN -eq '1' -or $env:SKIP_PE_SIGN -eq 'true') {
-    Write-Host "SKIP_PE_SIGN is set; skipping installer signing."
-    exit 0
-}
+    Write-Host "SKIP_PE_SIGN is set; skipping PE/installer signing (AppX signing continues)."
+} else {
+    if (-not $distDir) {
+        Write-Warning "Dist directory not found. Expected at: $(Join-Path $scriptDir '..\dist')"
+        exit 0
+    }
 
-if (-not $distDir) {
-    Write-Warning "Dist directory not found. Expected at: $(Join-Path $scriptDir '..\dist')"
-    exit 0
-}
-
-# O Include só funciona corretamente quando o path contém wildcard.
-# Aqui processamos EXE/DLL/NODE (PE) via script externo e AppX via signtool.exe
-Get-ChildItem -Path "$distDir\*" -File -Include *.exe,*.dll,*.node | ForEach-Object {
-    Write-Host "Assinando PE: $($_.FullName)"
-    & $signScript $_.FullName -Description "SnapAway" -DescriptionURL "https://edenware.app/snapaway"
+    # O Include só funciona corretamente quando o path contém wildcard.
+    # Aqui processamos EXE/DLL/NODE (PE) via script externo e AppX via signtool.exe
+    Get-ChildItem -Path "$distDir\*" -File -Include *.exe,*.dll,*.node | ForEach-Object {
+        Write-Host "Assinando PE: $($_.FullName)"
+        & $signScript $_.FullName -Description "SnapAway" -DescriptionURL "https://edenware.app/snapaway"
+    }
 }
 
 # AppX package is not a PE executable; sign with signtool.exe directly

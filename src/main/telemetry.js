@@ -201,6 +201,20 @@ function initMainTelemetry(app, options = {}) {
       attachStacktrace: true,
       autoSessionTracking: false,
       beforeSend(event) {
+        // Título útil dos issues de telemetria: quando o evento tem a tag
+        // eventName, garante que o título mostre o NOME do evento (ex.:
+        // "app.render-process-gone") em vez do culprit genérico
+        // "withTelemetryScope". O fingerprint já separa cada evento no seu
+        // próprio issue; aqui só ajustamos o título. Só remove a "exceção"
+        // sintética (stack do captureMessage), nunca erros reais.
+        const evtName = event.tags && event.tags.eventName;
+        if (evtName) {
+          event.message = evtName;
+          const values = event.exception && event.exception.values;
+          if (values && values.length > 0 && !values[0].type && values[0].value === evtName) {
+            delete event.exception;
+          }
+        }
         return event;
       }
     });
@@ -259,6 +273,17 @@ function initMainTelemetry(app, options = {}) {
 function captureTelemetryEvent(eventName, details = {}, options = {}) {
   const sanitizedDetails = sanitizeTelemetryDetails(details);
   writePersistentTelemetryLog(eventName, sanitizedDetails);
+
+  // Ruído conhecido (ELECTRON-8): renderer que NÃO chega a subir (reason
+  // 'launch-failed'). No overlay isso é ambiental (AV/GPU/recursos), não é bug
+  // do app — suprimimos aqui para não virar issue no Sentry (continua no log
+  // persistente). Trade-off: um launch-failed da janela PRINCIPAL também seria
+  // suprimido, mas isso seria catastrófico e apareceria por outros sinais.
+  const renderReason = details && details.reason;
+  if (renderReason === 'launch-failed' &&
+      (eventName === 'window.render-process-gone' || eventName === 'app.render-process-gone')) {
+    return;
+  }
 
   const shouldSend = options.sendToSentry === true || SENTRY_ISSUE_EVENTS.has(eventName);
   if (shouldSend && isSentryEnabled() && hasSentryClient()) {

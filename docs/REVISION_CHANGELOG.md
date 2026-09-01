@@ -1,4 +1,24 @@
 # Changelog - Revisão de Implementação Microsoft Store
+## 🚀 1.1.4 (31 de Agosto de 2026)
+
+Microbump `1.1.3 → 1.1.4` com correções baseadas na revisão dos issues do Sentry da release `SnapAway@1.1.3`.
+
+### ✅ Correções
+
+1. **Falha ao carregar ícone da janela em instalação MSIX (ELECTRON-12)** — `src/main/index.js`
+   - Sintoma: `Error: Failed to load image from path '...\app.asar\snapaway.ico'` em `createWindow` (instalação via Microsoft Store).
+   - Causa raiz: `new BrowserWindow({ icon: <path> })` e `window.setIcon(<path>)` recebem o **path cru**; o carregador **nativo** não lê dentro do `app.asar` (o `getDefaultIconPath()` devolve `...app.asar\snapaway.ico` porque `fs.existsSync` passa pelo shim do asar).
+   - Fix: novo helper `toNativeIcon(path)` (usa `nativeImage.createFromPath`, que é aware-de-asar) aplicado em `new BrowserWindow({ icon })` e `window.setIcon()` — com degradação graciosa (sem ícone) se falhar.
+
+2. **Telemetria Sentry: ruído de `render-process-gone` + títulos genéricos** — `src/main/telemetry.js`
+   - Suprime no Sentry os eventos `window/app.render-process-gone` com `reason === 'launch-failed'` (ruído do overlay, não-bug do app; continuam no log persistente).
+   - `beforeSend` força o título dos issues de telemetria para o `eventName` (ex.: `app.render-process-gone`) em vez do culprit genérico `withTelemetryScope`.
+
+### 🏷️ Versão
+
+- `package.json` / `package-lock.json`: `1.1.3 → 1.1.4` (o `AppxManifest.xml` usa `Version="${version}"` e herda automaticamente).
+
+---
 ## 🚀 1.1.3 (22 de Agosto de 2026)
 
 Microbump `1.1.2 → 1.1.3` com correções de estabilidade baseadas na análise dos issues do Sentry (release `SnapAway@1.1.2`).

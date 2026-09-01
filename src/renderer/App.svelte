@@ -1264,7 +1264,7 @@
   }
   .view-filter {
     justify-content: right;
-    padding-right: 0.75em;
+    padding-right: 0.35rem;
   }
   .view-filter input {
     border-bottom-left-radius: 6px;
