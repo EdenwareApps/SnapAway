@@ -1,4 +1,19 @@
 # Changelog - Revisão de Implementação Microsoft Store
+## 🚀 1.1.8 (9 de Setembro de 2026)
+
+Microbump `1.1.7 → 1.1.8` para reduzir relatórios de "hang" no encerramento da sessão do Windows.
+
+### ✅ Correção
+
+1. **Tratamento de fim de sessão (Windows)** — `src/main/index.js`
+   - O app (residente na bandeja e com auto-start) não tratava o fim de sessão (desligar, reiniciar ou sair da conta). Nesses casos o Windows dá um orçamento curto de quiesce e pode encerrar o processo à força, gerando relatório de hang (`hang_quiesce`) no Health da Store.
+   - Novo handler `app.on('session-end')`: finaliza rapidamente (sem diálogos nem cleanup longo) e encerra o app dentro do orçamento do sistema. Trace de telemetria `app.session-end`.
+
+### 🏷️ Versão
+
+- `package.json` / `package-lock.json`: `1.1.7 → 1.1.8` (o `AppxManifest.xml` usa `Version="${version}"` e herda automaticamente).
+
+---
 ## 🚀 1.1.7 (9 de Setembro de 2026)
 
 Microbump `1.1.6 → 1.1.7` com a opção de avaliar o SnapAway na Microsoft Store diretamente no aplicativo.

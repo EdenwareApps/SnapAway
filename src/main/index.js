@@ -5665,6 +5665,25 @@ app.on('before-quit', () => {
     stopElevatedHelperServer()
 })
 
+// Windows: sessão encerrando (desligar, reiniciar ou sair da conta). O Windows
+// dá um orçamento curto de "quiesce" e encerra à força apps que não respondem
+// a tempo (WER bucket APPLICATION_HANG_QUIESCE / moapplication_hang_*_hang_quiesce
+// no painel de Health da Store). Aqui finalizamos rápido: sem diálogos e sem
+// cleanup longo, dentro do orçamento do sistema.
+app.on('session-end', () => {
+    try {
+        appendIapTrace('app.session-end');
+        if (telemetry && typeof telemetry.captureTelemetryEvent === 'function') {
+            telemetry.captureTelemetryEvent('app.session-end');
+        }
+        app.isQuiting = true;
+        stopElevatedHelperServer();
+        app.quit();
+    } catch (error) {
+        console.warn('[MAIN] session-end handler error:', error && error.message ? error.message : String(error));
+    }
+})
+
 app.on('child-process-gone', (event, details) => {
     console.error('[MAIN] child-process-gone:', details);
     appendIapTrace('app.child-process-gone', details || null);
