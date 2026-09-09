@@ -5516,6 +5516,23 @@ app.on('gpu-process-crashed', (event, killed) => {
     if (telemetry && typeof telemetry.captureTelemetryEvent === 'function') {
         telemetry.captureTelemetryEvent('app.gpu-process-crashed', { killed });
     }
+
+    // Resiliência (fallback GPU): após crashes repetidos, desliga a aceleração
+    // de hardware (persistido). Se acabou de cruzar o limiar, reinicia o app
+    // uma vez para aplicar o fallback imediatamente. Não reinicia de novo se já
+    // estiver desabilitado (evita loop crash→relaunch→crash).
+    try {
+        const shouldRelaunch = gpuPolicy.recordGpuCrash(app);
+        if (shouldRelaunch) {
+            console.warn('[GPU FALLBACK] Relaunching app to apply GPU fallback.');
+            appendIapTrace('app.gpu-fallback.activated');
+            app.isQuiting = true;
+            app.relaunch();
+            setImmediate(() => app.quit());
+        }
+    } catch (err) {
+        console.warn('[GPU FALLBACK] Failed to record GPU crash:', err && err.message ? err.message : err);
+    }
 });
 
 app.on('suspend', () => {

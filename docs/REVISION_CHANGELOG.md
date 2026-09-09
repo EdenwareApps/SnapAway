@@ -14,6 +14,10 @@ Microbump `1.1.5 → 1.1.6` com correções de estabilidade/renderer e redução
    - Causa: o ELECTRON-8 vem da integração `child-process` do @sentry/electron (captura automática de `'renderer' process exited with 'launch-failed'`), fora do nosso `captureTelemetryEvent`.
    - Fix: `beforeSend` agora descarta (`return null`) eventos com `process exited with 'launch-failed'` — complementa a supressão já existente.
 
+3. **Fallback automático de GPU por crashes repetidos (ELECTRON-Y/S/8)** — `src/main/gpu-policy.js` + `src/main/index.js`
+   - Contexto: em algumas máquinas o processo GPU do Chromium cai repetidamente (janelas transparentes/always-on-top + driver instável), gerando `gpu-process-crashed` (ELECTRON-Y), crash de DxDiag/WMI (ELECTRON-S) e overlay `launch-failed` (ELECTRON-8).
+   - Fix: estado persistido em `gpu-fallback.json` no userData (`{disabled, crashCount, disabledAt}`). Após **2** `gpu-process-crashed`, desliga a aceleração de hardware na próxima sessão e reinicia o app uma vez para aplicar na hora. No startup, `applyGpuFallback()` chama `app.disableHardwareAcceleration()` + `disable-gpu-compositing`. Janela de recuperação de **7 dias** re-tenta HW accel (driver pode ter sido atualizado). Sem loop de relaunch.
+
 ### 🏷️ Versão
 
 - `package.json` / `package-lock.json`: `1.1.5 → 1.1.6` (o `AppxManifest.xml` usa `Version="${version}"` e herda automaticamente).
