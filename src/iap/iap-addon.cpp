@@ -826,6 +826,192 @@ private:
   uint32_t extendedErrorValue_ = 0;
 };
 
+// Abre o diálogo nativo de avaliação/review da Microsoft Store
+// (StoreContext.RequestRateAndReviewAppAsync). Só faz sentido quando o app tem
+// identidade de pacote (instalação via Microsoft Store / MSIX). O diálogo é
+// exibido como janela XAML da Store e, por isso, precisa de um STA thread com
+// message pump (mesmo padrão do RequestPurchaseAsync).
+class RequestRateAndReviewWorker : public IapWorker {
+public:
+  RequestRateAndReviewWorker(Napi::Env env, uint32_t hwndLow, uint32_t hwndHigh)
+    : IapWorker(env), hwndLow_(hwndLow), hwndHigh_(hwndHigh),
+      status_("Error"), wasUpdated_(false), extendedErrorValue_(0) {}
+
+  void Execute() override {
+    RunRateAndReviewOnSTA();
+  }
+
+  void OnOK() override {
+    Napi::Env env = Env();
+    Napi::Object result = Napi::Object::New(env);
+    result.Set("status", Napi::String::New(env, status_));
+    result.Set("wasUpdated", Napi::Boolean::New(env, wasUpdated_));
+    result.Set("extendedError", Napi::String::New(env, extendedErrorStr_));
+    result.Set("extendedErrorCode", Napi::Number::New(env, extendedErrorValue_));
+    if (!error_.empty()) {
+      result.Set("error", Napi::String::New(env, error_));
+    }
+    deferred_.Resolve(result);
+  }
+
+  void OnError(const Napi::Error& e) override {
+    Napi::Env env = Env();
+    Napi::Object result = Napi::Object::New(env);
+    result.Set("status", Napi::String::New(env, "Error"));
+    result.Set("wasUpdated", Napi::Boolean::New(env, false));
+    result.Set("extendedError", Napi::String::New(env, "0x0"));
+    result.Set("extendedErrorCode", Napi::Number::New(env, 0));
+    result.Set("error", e.Message());
+    deferred_.Resolve(result);
+  }
+
+private:
+  void RunRateAndReviewOnSTA() {
+    std::thread staThread([this]() {
+      ::CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+      DoRunRateAndReviewOnSTA();
+      ::CoUninitialize();
+    });
+    staThread.join();
+  }
+
+  void DoRunRateAndReviewOnSTA() {
+    StoreContext storeCtx = nullptr;
+    if (!TryGetStoreContext(storeCtx)) {
+      status_ = "Error";
+      error_ = "Store context unavailable";
+      return;
+    }
+
+    // Associe a janela principal do Electron para que o diálogo da Store seja
+    // parented corretamente (necessário quando usamos o fallback GetForUser()).
+    HWND hwnd = reinterpret_cast<HWND>(static_cast<uint64_t>(hwndHigh_) << 32 | static_cast<uint64_t>(hwndLow_));
+    if (hwnd) {
+      try {
+        auto storeUnk = winrt::get_unknown(storeCtx);
+        IInitializeWithWindowNative* initPtr = nullptr;
+        static const GUID iid = __uuidof(IInitializeWithWindowNative);
+        if (SUCCEEDED(storeUnk->QueryInterface(iid, reinterpret_cast<void**>(&initPtr))) && initPtr) {
+          HRESULT hr = initPtr->Initialize(hwnd);
+          printf("[IAP-NATIVE] RateAndReview IInitializeWithWindow::Initialize HWND=%p hr=0x%08X\n", (void*)hwnd, static_cast<uint32_t>(hr));
+          initPtr->Release();
+        } else {
+          printf("[IAP-NATIVE] RateAndReview IInitializeWithWindow QI failed (interface not available)\n");
+        }
+      } catch (...) {
+        printf("[IAP-NATIVE] RateAndReview IInitializeWithWindow::Initialize threw\n");
+      }
+    } else {
+      printf("[IAP-NATIVE] RateAndReview no HWND provided - rating dialog may not display\n");
+    }
+
+    HANDLE hDone = ::CreateEvent(nullptr, TRUE, FALSE, nullptr);
+    if (!hDone) {
+      status_ = "Error";
+      error_ = "CreateEvent failed";
+      return;
+    }
+
+    std::atomic<bool> reviewDone{false};
+    auto reviewStart = std::chrono::steady_clock::now();
+
+    try {
+      auto op = storeCtx.RequestRateAndReviewAppAsync();
+
+      op.Completed([this, hDone, &reviewDone](
+          winrt::Windows::Foundation::IAsyncOperation<StoreRateAndReviewResult> const& operation,
+          winrt::Windows::Foundation::AsyncStatus asyncStatus) {
+        try {
+          if (asyncStatus == winrt::Windows::Foundation::AsyncStatus::Completed) {
+            auto result = operation.GetResults();
+            StoreRateAndReviewStatus s = result.Status();
+            switch (s) {
+              case StoreRateAndReviewStatus::Succeeded:      status_ = "Succeeded"; break;
+              case StoreRateAndReviewStatus::CanceledByUser: status_ = "Canceled"; break;
+              case StoreRateAndReviewStatus::NetworkError:   status_ = "NetworkError"; break;
+              case StoreRateAndReviewStatus::Error:          status_ = "Error"; break;
+              default:                                       status_ = "Error"; break;
+            }
+            try {
+              wasUpdated_ = result.WasUpdated();
+            } catch (...) {
+              wasUpdated_ = false;
+            }
+            try {
+              extendedErrorValue_ = static_cast<uint32_t>(result.ExtendedError().value);
+            } catch (...) {
+              extendedErrorValue_ = 0;
+            }
+            if (extendedErrorValue_ != 0) {
+              printf("[IAP-NATIVE] RequestRateAndReviewAppAsync extendedError = 0x%08X\n", extendedErrorValue_);
+            }
+          } else if (asyncStatus == winrt::Windows::Foundation::AsyncStatus::Canceled) {
+            status_ = "Canceled";
+            error_ = "Rating dialog canceled by user";
+          } else {
+            status_ = "Error";
+            error_ = "RequestRateAndReviewAppAsync operation failed";
+          }
+        } catch (const winrt::hresult_error& e) {
+          status_ = "Error";
+          error_ = "Exception in Completed: " + winrt::to_string(e.message());
+        } catch (...) {
+          status_ = "Error";
+          error_ = "Unknown exception in Completed handler";
+        }
+        extendedErrorStr_ = HResultToHex(extendedErrorValue_);
+        reviewDone.store(true, std::memory_order_release);
+        ::SetEvent(hDone);
+      });
+    } catch (const winrt::hresult_error& e) {
+      status_ = "Error";
+      error_ = "RequestRateAndReviewAppAsync threw: " + winrt::to_string(e.message());
+      extendedErrorStr_ = HResultToHex(static_cast<HRESULT>(e.code()));
+      extendedErrorValue_ = static_cast<uint32_t>(e.code());
+      ::CloseHandle(hDone);
+      return;
+    } catch (...) {
+      status_ = "Error";
+      error_ = "RequestRateAndReviewAppAsync threw unknown exception";
+      ::CloseHandle(hDone);
+      return;
+    }
+
+    // Pump mensagens Win32 enquanto o diálogo de avaliação da Store está aberto.
+    MSG msg;
+    while (!reviewDone.load(std::memory_order_acquire)) {
+      DWORD waitResult = ::MsgWaitForMultipleObjectsEx(
+          1, &hDone, 180000, QS_ALLINPUT, MWMO_ALERTABLE | MWMO_INPUTAVAILABLE);
+      if (waitResult == WAIT_OBJECT_0) {
+        break; // event signaled - operation complete
+      } else if (waitResult == WAIT_OBJECT_0 + 1) {
+        while (::PeekMessage(&msg, nullptr, 0, 0, PM_REMOVE)) {
+          ::TranslateMessage(&msg);
+          ::DispatchMessage(&msg);
+        }
+      } else {
+        // Timeout or unexpected error
+        if (!reviewDone.load()) {
+          status_ = "Error";
+          error_ = "RequestRateAndReviewAppAsync timed out after 180s";
+        }
+        break;
+      }
+    }
+
+    LogStoreOperationDuration("RequestRateAndReviewAppAsync(STA)", reviewStart);
+    ::CloseHandle(hDone);
+  }
+
+  uint32_t hwndLow_ = 0;
+  uint32_t hwndHigh_ = 0;
+  std::string status_ = "Error";
+  std::string error_;
+  bool wasUpdated_ = false;
+  std::string extendedErrorStr_ = "0x0";
+  uint32_t extendedErrorValue_ = 0;
+};
+
 Napi::Value CheckOwnership(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
 
@@ -863,6 +1049,20 @@ Napi::Value RequestPurchase(const Napi::CallbackInfo& info) {
     hwndHigh = info[2].As<Napi::Number>().Uint32Value();
   }
   auto* worker = new RequestPurchaseWorker(env, productId, hwndLow, hwndHigh);
+  worker->Queue();
+  return worker->GetPromise();
+}
+
+Napi::Value RequestRateAndReview(const Napi::CallbackInfo& info) {
+  Napi::Env env = info.Env();
+  uint32_t hwndLow = 0, hwndHigh = 0;
+  if (info.Length() >= 1 && info[0].IsNumber()) {
+    hwndLow = info[0].As<Napi::Number>().Uint32Value();
+  }
+  if (info.Length() >= 2 && info[1].IsNumber()) {
+    hwndHigh = info[1].As<Napi::Number>().Uint32Value();
+  }
+  auto* worker = new RequestRateAndReviewWorker(env, hwndLow, hwndHigh);
   worker->Queue();
   return worker->GetPromise();
 }
@@ -969,6 +1169,11 @@ Napi::Object Init(Napi::Env env, Napi::Object exports) {
   exports.Set(
     Napi::String::New(env, "requestPurchase"),
     Napi::Function::New(env, RequestPurchase)
+  );
+
+  exports.Set(
+    Napi::String::New(env, "requestRateAndReview"),
+    Napi::Function::New(env, RequestRateAndReview)
   );
 
   exports.Set(

@@ -773,6 +773,7 @@ const licenseManager = require('../license/license.js');
 const iconProcessor = require('../cloak/icon-processor.js');
 const iapModule = require('../iap/index.js');
 const retention = require('./retention');
+const reviewPrompt = require('./review-prompt');
 const premiumProvider = require('./premium/provider');
 const lang = require('../language/language.js');
 let lastKnownStorePro = false;
@@ -3096,6 +3097,11 @@ function captureHideCompleted(source = '') {
         return;
     }
 
+    // Contador de uso real do recurso central (base para oferta de review).
+    if (reviewPrompt && typeof reviewPrompt.recordHideUsage === 'function') {
+        reviewPrompt.recordHideUsage();
+    }
+
     const previousCount = Number(config.revealHintShownCount || 0);
     const nextCount = previousCount + 1;
     config.revealHintShownCount = nextCount;
@@ -3114,6 +3120,73 @@ function captureHideCompleted(source = '') {
     }
 
     maybeShowRevealHint(source);
+}
+
+// ---------------------------------------------------------------------------
+// Pedido de review (avaliação na Microsoft Store)
+//
+// Só oferta quando o usuário demonstra engajamento real (ver review-prompt.js).
+// ---------------------------------------------------------------------------
+function buildStoreReviewDeepLink(storeContext) {
+    // Deep link oficial para avaliação: ms-windows-store://review/?PFN=<PFN>.
+    // Sem PFN disponível, abre a página do produto (o usuário chega às avaliações).
+    if (storeContext && storeContext.packageFamilyName) {
+        return `ms-windows-store://review/?PFN=${encodeURIComponent(storeContext.packageFamilyName)}`;
+    }
+    return `ms-windows-store://pdp/?ProductId=${defaultStoreIapProductId}`;
+}
+
+async function openStoreReviewFallback(storeContext) {
+    try {
+        await shell.openExternal(buildStoreReviewDeepLink(storeContext));
+        return true;
+    } catch (error) {
+        console.warn('[REVIEW] openStoreReviewFallback error:', error && error.message ? error.message : String(error));
+        return false;
+    }
+}
+
+function sendReviewPromptToRenderer() {
+    try {
+        if (window && !window.isDestroyed() && window.webContents) {
+            window.webContents.send('show-review-prompt', { source: 'post-show' });
+        }
+    } catch (error) {
+        console.warn('[REVIEW] sendReviewPromptToRenderer error:', error && error.message ? error.message : String(error));
+    }
+}
+
+// Avalia se o usuário pode receber o pedido de review agora e, se sim, avisa o
+// renderer exibir o modal.
+function maybeOfferReviewPrompt(source = '') {
+    try {
+        const storeContext = getStoreInstallContext();
+        reviewPrompt.maybeOfferReview({
+            source,
+            isStoreInstall: storeContext.isStoreInstall,
+            sendOffer: sendReviewPromptToRenderer
+        });
+    } catch (error) {
+        console.warn('[REVIEW] maybeOfferReviewPrompt error:', error && error.message ? error.message : String(error));
+    }
+}
+
+// Agenda a oferta alguns segundos após um "show" bem-sucedido (janela visível),
+// para não interromper a restauração das janelas. Ignora o modo float (janela
+// pequena/flutuante) e estados em que o app não está visível.
+function schedulePostShowReviewPrompt() {
+    try {
+        if (global.uiMode === 'float') return;
+        setTimeout(() => {
+            if (global.currentState !== 'show') return;
+            if (global.uiMode === 'float') return;
+            if (!window || window.isDestroyed()) return;
+            if (!window.isVisible() || window.isMinimized()) return;
+            maybeOfferReviewPrompt('post-show');
+        }, 4000);
+    } catch (error) {
+        console.warn('[REVIEW] schedulePostShowReviewPrompt error:', error && error.message ? error.message : String(error));
+    }
 }
 
 // Função para alternar entre show/hide (funcionalidade principal do app)
@@ -3226,6 +3299,11 @@ const toggleShowHide = (state, source = '', force = false) => {
     updateNotificationBadge();
 
     console.log(`[MAIN] Show/Hide state changed to: ${global.currentState} (changed=${changed})`);
+
+    // Pós-sessão: após restaurar (show), avalia a oferta de review (engajado).
+    if (state === 'show' && changed && global.currentState === 'show') {
+        schedulePostShowReviewPrompt();
+    }
 
     if (!changed) {
         console.log('[MAIN] toggleShowHide called but state was already', state);
@@ -3723,6 +3801,99 @@ ipcMain.handle('request-purchase', async (event, productId) => {
             error: serializeError(error)
         });
         return { status: 'NetworkError', error: error.message };
+    }
+});
+
+ipcMain.handle('review-now', async (event) => {
+    const storeContext = getStoreInstallContext();
+    try {
+        if (!storeContext.isStoreInstall) {
+            return { status: 'Unavailable', mechanism: 'none', extendedError: '0x0' };
+        }
+
+        // HWND da janela principal para o addon nativo (IInitializeWithWindow).
+        let hwndLow = 0, hwndHigh = 0;
+        try {
+            if (window && !window.isDestroyed()) {
+                const buf = window.getNativeWindowHandle();
+                hwndLow = buf.readUInt32LE(0);
+                hwndHigh = buf.length >= 8 ? buf.readUInt32LE(4) : 0;
+            }
+        } catch (hwndErr) {
+            console.warn('[REVIEW] Failed to get window HWND:', hwndErr && hwndErr.message ? hwndErr.message : String(hwndErr));
+        }
+
+        // 1) Tenta o diálogo nativo de avaliação da Microsoft Store.
+        let result;
+        try {
+            result = await iapModule.requestRateAndReview(hwndLow, hwndHigh);
+        } catch (nativeErr) {
+            result = {
+                status: 'Error',
+                error: nativeErr && nativeErr.message ? nativeErr.message : String(nativeErr),
+                extendedError: '0x0',
+                extendedErrorCode: 0
+            };
+        }
+        console.log('[REVIEW] requestRateAndReview result:', result);
+
+        let finalStatus = result && result.status ? result.status : 'Error';
+        let mechanism = 'native';
+        const failureLike = ['NetworkError', 'Error', 'Unavailable'].includes(finalStatus);
+
+        // 2) Fallback: falha de rede/erro → abre a página de review da Store.
+        if (failureLike) {
+            const opened = await openStoreReviewFallback(storeContext);
+            if (opened) {
+                finalStatus = 'FallbackOpened';
+                mechanism = 'fallback';
+            }
+        }
+
+        if (finalStatus === 'Succeeded' || finalStatus === 'FallbackOpened') {
+            // Review de fato pedido/aberto — não perguntar mais nesta instalação.
+            reviewPrompt.markAskedEver();
+            retention.trackRetentionEvent('retention.review_accepted', {
+                status: finalStatus,
+                mechanism,
+                wasUpdated: !!(result && result.wasUpdated)
+            });
+        } else if (finalStatus === 'Canceled') {
+            // Usuário viu (ou a Store não exibiu) e fechou — adia o próximo pedido.
+            reviewPrompt.markOffered();
+            retention.trackRetentionEvent('retention.review_declined', {
+                status: finalStatus,
+                mechanism
+            });
+        } else {
+            // Falhou (ex.: offline) — mantém o cooldown já iniciado no pedido.
+            retention.trackRetentionEvent('retention.review_failed', {
+                status: finalStatus,
+                mechanism,
+                error: (result && result.error) || ''
+            });
+        }
+
+        return {
+            status: finalStatus,
+            mechanism,
+            extendedError: (result && result.extendedError) || '0x0'
+        };
+    } catch (error) {
+        console.error('[REVIEW] review-now error:', error);
+        return { status: 'Error', mechanism: 'none', error: error && error.message ? error.message : String(error) };
+    }
+});
+
+ipcMain.on('review-decision', (event, decision) => {
+    try {
+        if (decision === 'never') {
+            reviewPrompt.markDismissedForever();
+        } else if (decision === 'later') {
+            reviewPrompt.markPostponed();
+        }
+    } catch (error) {
+        console.warn('[REVIEW] review-decision error:', error && error.message ? error.message : String(error));
     }
 });
 

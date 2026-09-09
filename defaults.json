@@ -9,5 +9,9 @@
     "updateUrl": "https://edenware.app/snapaway/update.json",
     "revealHintShownCount": 0,
     "revealHintDismissedForever": false,
+    "hideUsageCount": 0,
+    "reviewPromptLastOfferAt": 0,
+    "reviewPromptAskedEver": false,
+    "reviewPromptDismissedForever": false,
     "showTitlebarOverlay": true
   }

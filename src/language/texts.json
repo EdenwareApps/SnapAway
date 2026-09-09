@@ -1,6 +1,13 @@
 {
   "en": {
     "ABOUT": "About",
+    "HELP": "Help",
+    "REVIEW_TITLE": "Enjoying SnapAway?",
+    "REVIEW_BODY": "Your rating helps others discover SnapAway and keeps us motivated to improve it. It only takes a minute.",
+    "REVIEW_RATE_NOW": "Rate SnapAway",
+    "REVIEW_LATER": "Not now",
+    "REVIEW_NEVER": "Don't ask again",
+    "REVIEW_OPENING": "Opening Microsoft Store…",
     "ACTIVATE": "Activate",
     "ACTIVATE_LICENSE": "Activate License",
     "ACTIVATING": "Activating...",
@@ -158,6 +165,7 @@
   },
   "ar": {
     "ABOUT": "حول",
+    "HELP": "مساعدة",
     "ACTIVATE": "تفعيل",
     "ACTIVATE_LICENSE": "تفعيل الترخيص",
     "ACTIVATING": "جارٍ التفعيل...",
@@ -307,6 +315,7 @@
   },
   "cs": {
     "ABOUT": "O aplikaci",
+    "HELP": "Nápověda",
     "ACTIVATE": "Aktivovat",
     "ACTIVATE_LICENSE": "Aktivovat licenci",
     "ACTIVATING": "Aktivace...",
@@ -456,6 +465,7 @@
   },
   "de": {
     "ABOUT": "Über",
+    "HELP": "Hilfe",
     "ACTIVATE": "Aktivieren",
     "ACTIVATE_LICENSE": "Lizenz aktivieren",
     "ACTIVATING": "Aktivierung...",
@@ -605,6 +615,7 @@
   },
   "el": {
     "ABOUT": "Σχετικά",
+    "HELP": "Βοήθεια",
     "ACTIVATE": "Ενεργοποίηση",
     "ACTIVATE_LICENSE": "Ενεργοποίηση άδειας",
     "ACTIVATING": "Ενεργοποιείται...",
@@ -754,6 +765,7 @@
   },
   "es": {
     "ABOUT": "Acerca de",
+    "HELP": "Ayuda",
     "ACTIVATE": "Activar",
     "ACTIVATE_LICENSE": "Activar licencia",
     "ACTIVATING": "Activando...",
@@ -903,6 +915,7 @@
   },
   "fr": {
     "ABOUT": "À propos",
+    "HELP": "Aide",
     "ACTIVATE": "Activer",
     "ACTIVATE_LICENSE": "Activer la licence",
     "ACTIVATING": "Activation...",
@@ -1052,6 +1065,7 @@
   },
   "hi": {
     "ABOUT": "के बारे में",
+    "HELP": "सहायता",
     "ACTIVATE": "सक्रिय करें",
     "ACTIVATE_LICENSE": "लाइसेंस सक्रिय करें",
     "ACTIVATING": "सक्रिय किया जा रहा है...",
@@ -1201,6 +1215,7 @@
   },
   "hu": {
     "ABOUT": "Névjegy",
+    "HELP": "Súgó",
     "ACTIVATE": "Aktiválás",
     "ACTIVATE_LICENSE": "Licencia aktiválása",
     "ACTIVATING": "Aktiválás...",
@@ -1350,6 +1365,7 @@
   },
   "it": {
     "ABOUT": "Informazioni",
+    "HELP": "Aiuto",
     "ACTIVATE": "Attiva",
     "ACTIVATE_LICENSE": "Attiva licenza",
     "ACTIVATING": "Attivazione in corso...",
@@ -1499,6 +1515,7 @@
   },
   "ja": {
     "ABOUT": "について",
+    "HELP": "ヘルプ",
     "ACTIVATE": "有効化",
     "ACTIVATE_LICENSE": "ライセンスを有効化",
     "ACTIVATING": "有効化中...",
@@ -1648,6 +1665,7 @@
   },
   "ko": {
     "ABOUT": "정보",
+    "HELP": "도움말",
     "ACTIVATE": "활성화",
     "ACTIVATE_LICENSE": "라이선스 활성화",
     "ACTIVATING": "활성화 중...",
@@ -1797,6 +1815,7 @@
   },
   "nl": {
     "ABOUT": "Over",
+    "HELP": "Help",
     "ACTIVATE": "Activeren",
     "ACTIVATE_LICENSE": "Licentie activeren",
     "ACTIVATING": "Bezig met activeren...",
@@ -1946,6 +1965,7 @@
   },
   "pl": {
     "ABOUT": "O programie",
+    "HELP": "Pomoc",
     "ACTIVATE": "Aktywuj",
     "ACTIVATE_LICENSE": "Aktywuj licencję",
     "ACTIVATING": "Aktywowanie...",
@@ -2095,6 +2115,13 @@
   },
   "pt": {
     "ABOUT": "Sobre",
+    "HELP": "Ajuda",
+    "REVIEW_TITLE": "Gostando do SnapAway?",
+    "REVIEW_BODY": "Sua avaliação ajuda outras pessoas a descobrirem o SnapAway e nos motiva a melhorar cada vez mais. Leva menos de um minuto.",
+    "REVIEW_RATE_NOW": "Avaliar agora",
+    "REVIEW_LATER": "Agora não",
+    "REVIEW_NEVER": "Não perguntar de novo",
+    "REVIEW_OPENING": "Abrindo a Microsoft Store…",
     "ACTIVATE": "Ativar",
     "ACTIVATE_LICENSE": "Ativar licença",
     "ACTIVATING": "Ativando...",
@@ -2251,6 +2278,7 @@
   },
   "ru": {
     "ABOUT": "О программе",
+    "HELP": "Справка",
     "ACTIVATE": "Активировать",
     "ACTIVATE_LICENSE": "Активировать лицензию",
     "ACTIVATING": "Активируется...",
@@ -2400,6 +2428,7 @@
   },
   "sv": {
     "ABOUT": "Om",
+    "HELP": "Hjälp",
     "ACTIVATE": "Aktivera",
     "ACTIVATE_LICENSE": "Aktivera licens",
     "ACTIVATING": "Aktiverar...",
@@ -2549,6 +2578,7 @@
   },
   "th": {
     "ABOUT": "เกี่ยวกับ",
+    "HELP": "ความช่วยเหลือ",
     "ACTIVATE": "เปิดใช้งาน",
     "ACTIVATE_LICENSE": "เปิดใช้งานใบอนุญาต",
     "ACTIVATING": "กำลังเปิดใช้งาน...",
@@ -2698,6 +2728,7 @@
   },
   "tr": {
     "ABOUT": "Hakkında",
+    "HELP": "Yardım",
     "ACTIVATE": "Etkinleştir",
     "ACTIVATE_LICENSE": "Lisansı Etkinleştir",
     "ACTIVATING": "Etkinleştiriliyor...",
@@ -2847,6 +2878,7 @@
   },
   "zh": {
     "ABOUT": "关于",
+    "HELP": "帮助",
     "ACTIVATE": "激活",
     "ACTIVATE_LICENSE": "激活许可证",
     "ACTIVATING": "正在激活...",

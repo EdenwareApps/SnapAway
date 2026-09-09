@@ -1,4 +1,32 @@
 # Changelog - Revisão de Implementação Microsoft Store
+## 🚀 1.1.7 (9 de Setembro de 2026)
+
+Microbump `1.1.6 → 1.1.7` com pedido de avaliação (review) na Microsoft Store acionado apenas quando o usuário demonstra engajamento.
+
+### ✅ Nova funcionalidade — Review prompt (Store)
+
+1. **Gatilho por engajamento** — `src/main/review-prompt.js` (novo)
+   - Só oferta em instalação via Store (`isStoreInstall`), com `hideUsageCount >= 10`, `>= 3 dias` desde o 1º launch e sinal extra de engajamento (filtros configurados, retorno `d7` ou Pro).
+   - Anti-nagging persistente no config: 1 pedido real por instalação, cooldown de 45 dias após "agora não", opção de nunca mais perguntar.
+
+2. **Diálogo nativo + fallback** — `src/iap/iap-addon.cpp`
+   - Novo `RequestRateAndReviewWorker` chamando `StoreContext::RequestRateAndReviewAppAsync()` (STA + message pump + `IInitializeWithWindow`), exposto como `requestRateAndReview`.
+   - Fallback por deep link (`ms-windows-store://review/?PFN=...` ou página do produto) quando o nativo falha (rede/erro).
+   - Envoltório em `src/iap/iap-wrapper.js` com stub de fallback.
+
+3. **UI e telemetria**
+   - `src/renderer/components/ReviewModal.svelte` (novo): estrelas + "Avaliar agora" / "Agora não" / "Não perguntar de novo"; fechar (X/overlay) conta como "agora não".
+   - `src/renderer/App.svelte` recebe `show-review-prompt` do main (não empilha com outros modais, não mostra em onboarding/hide).
+   - `src/preload/index.js`: expõe `requestRatingReview`, `reviewDecision`, `onReviewPrompt`.
+   - Textos `REVIEW_*` em `en` e `pt` (`src/language/texts.json`).
+   - Eventos de retenção: `retention.review_offered/offered_ui/accepted/declined/postponed/dismissed_forever/failed`.
+   - Flags novas em `defaults.json` (raiz e `src/config/defaults.json`): `hideUsageCount`, `reviewPromptLastOfferAt`, `reviewPromptAskedEver`, `reviewPromptDismissedForever`.
+
+### 🏷️ Versão
+
+- `package.json` / `package-lock.json`: `1.1.6 → 1.1.7` (o `AppxManifest.xml` usa `Version="${version}"` e herda automaticamente).
+
+---
 ## 🚀 1.1.6 (9 de Setembro de 2026)
 
 Microbump `1.1.5 → 1.1.6` com correções de estabilidade/renderer e redução de ruído no Sentry.

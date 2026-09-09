@@ -7,6 +7,7 @@
   import ShortcutSetter from './components/ShortcutSetter.svelte';
   import TitleFilter from './components/TitleFilter.svelte';
   import TrayGuideModal from './components/TrayGuideModal.svelte';
+  import ReviewModal from './components/ReviewModal.svelte';
   import ProModal from './pro/ProModal.svelte';
 
   let viewFilterCaseSensitive = true;
@@ -43,6 +44,8 @@
   let proModalFeature = '';
   let proModalFeatureName = '';
   let showTrayGuide = false;
+  let showReviewPrompt = false; // Pedido de review (disparado pelo main quando engajado)
+  let reviewBusy = false;
   let whatToFilterMessages = ['', ''];
   let selectElement; // Reference to the select element for width adjustment
   let ready = false; // Wait for initial state from main process before rendering
@@ -448,6 +451,56 @@
   function handleTrayGuideClose() {
     showTrayGuide = false;
   }
+
+  // --- Pedido de review (avaliação na Microsoft Store) ---
+  // O main decide a elegibilidade (usuário engajado) e envia 'show-review-prompt'.
+  function handleReviewPromptRequest(payload) {
+    if (showReviewPrompt) return; // já aberto
+    if (isFirstRun) return;       // nunca durante o onboarding
+    if (showProModal || showTrayGuide) return; // não empilhar modais
+    if (currentState === 'hide') return;
+    showReviewPrompt = true;
+    if (window.api && window.api.trackEvent) {
+      window.api.trackEvent('retention.review_offered_ui', {
+        source: (payload && payload.source) || 'post-show'
+      });
+    }
+  }
+
+  async function handleReviewRateNow() {
+    if (reviewBusy) return;
+    reviewBusy = true;
+    try {
+      if (window.api && window.api.requestRatingReview) {
+        const result = await window.api.requestRatingReview();
+        console.log('[App.svelte] requestRatingReview result:', result);
+      }
+    } catch (error) {
+      console.error('[App.svelte] Error requesting rating review:', error);
+    } finally {
+      reviewBusy = false;
+      showReviewPrompt = false;
+    }
+  }
+
+  function handleReviewLater() {
+    if (window.api && window.api.reviewDecision) {
+      window.api.reviewDecision('later');
+    }
+    showReviewPrompt = false;
+  }
+
+  function handleReviewNever() {
+    if (window.api && window.api.reviewDecision) {
+      window.api.reviewDecision('never');
+    }
+    showReviewPrompt = false;
+  }
+
+  // Fechar via X/overlay conta como "agora não" (respeita o anti-nagging).
+  function handleReviewModalClose() {
+    handleReviewLater();
+  }
   
   function showProModalFor(feature, featureName) {
     proModalFeature = feature || '';
@@ -845,6 +898,13 @@
       });
   }
 
+  // Pedido de review: o main avisa o renderer quando o usuário está engajado.
+  if (window.api.onReviewPrompt) {
+    window.api.onReviewPrompt((_, payload) => {
+      handleReviewPromptRequest(payload);
+    });
+  }
+
     console.log('[App.svelte] API event listeners set up successfully');
   }
 
@@ -1008,7 +1068,7 @@
             {#if appVersion}v{appVersion}{/if}
           </strong>
           &middot; 
-          <a href={aboutUrl} on:click|preventDefault={() => launchUrl(aboutUrl)}>{lang.ABOUT}</a>
+          <a href={aboutUrl} on:click|preventDefault={() => launchUrl(aboutUrl)}><i class="fas fa-question-circle" aria-hidden="true"></i>&nbsp;{lang.HELP}</a>
         </span>
       </div>
     </div>
@@ -1099,6 +1159,16 @@
   {/if}
   {#if showTrayGuide}
     <TrayGuideModal {lang} on:close={handleTrayGuideClose} />
+  {/if}
+  {#if showReviewPrompt}
+    <ReviewModal
+      {lang}
+      busy={reviewBusy}
+      on:rate={handleReviewRateNow}
+      on:later={handleReviewLater}
+      on:never={handleReviewNever}
+      on:close={handleReviewModalClose}
+    />
   {/if}
 </main>
 {/if}

@@ -18,6 +18,13 @@
  *  - retention.purchase_started  : diálogo de compra da Store aberto
  *  - retention.purchase_completed: compra concluída na Store
  *  - retention.purchase_failed   : falha/erro no fluxo de compra da Store
+ *  - retention.review_offered    : pedido de review decidido/exibido (usuário engajado)
+ *  - retention.review_offered_ui : renderer confirmou a exibição do modal
+ *  - retention.review_accepted   : usuário avaliou/abriu o review (nativo ou fallback)
+ *  - retention.review_declined   : usuário fechou o diálogo nativo sem avaliar
+ *  - retention.review_postponed  : usuário escolheu "agora não"
+ *  - retention.review_dismissed_forever : usuário pediu para nunca mais perguntar
+ *  - retention.review_failed     : falha ao abrir o pedido de review
  */
 
 const telemetry = require('./telemetry');

@@ -41,5 +41,9 @@
     "cloakIconPath": null,
     "showTitlebarOverlay": true,
     "firstLaunchAt": 0,
-    "retentionMarkers": {}
+    "retentionMarkers": {},
+    "hideUsageCount": 0,
+    "reviewPromptLastOfferAt": 0,
+    "reviewPromptAskedEver": false,
+    "reviewPromptDismissedForever": false
   }

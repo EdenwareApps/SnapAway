@@ -76,6 +76,7 @@ function loadNativeModuleDirect() {
     checkOwnership: (productId) => ({ isOwned: false, productId }),
     getLicenseInfo: () => ({ isPro: false, expirationDate: '', features: [], appLimit: 2 }),
     requestPurchase: (productId) => ({ status: 'NotPurchased', productId }),
+    requestRateAndReview: () => ({ status: 'Error', error: 'Native module unavailable' }),
     getProducts: () => [],
     initStoreContext: () => ({ initialized: false, error: 'Native module unavailable' }),
     logCustomEvent: (name) => ({ logged: false, available: false, error: 'Native module unavailable' }),
@@ -183,6 +184,21 @@ async function requestPurchase(productId, hwndLow = 0, hwndHigh = 0) {
   }
 }
 
+async function requestRateAndReview(hwndLow = 0, hwndHigh = 0) {
+  const addon = getDirectNativeAddon();
+  try {
+    return await resolveAddonCall('requestRateAndReview', addon.requestRateAndReview.bind(addon), hwndLow, hwndHigh);
+  } catch (error) {
+    console.error('[IAP] requestRateAndReview error:', error);
+    return {
+      status: 'Error',
+      error: error && error.message ? error.message : String(error),
+      extendedError: '0x0',
+      extendedErrorCode: 0
+    };
+  }
+}
+
 async function getProducts() {
   const addon = getDirectNativeAddon();
   try {
@@ -218,6 +234,7 @@ module.exports = {
   checkOwnership,
   getLicenseInfo,
   requestPurchase,
+  requestRateAndReview,
   getProducts,
   initStoreContext,
   logCustomEvent,
