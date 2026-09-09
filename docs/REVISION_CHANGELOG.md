@@ -1,4 +1,18 @@
 # Changelog - Revisão de Implementação Microsoft Store
+## 🚀 1.1.9 (9 de Setembro de 2026)
+
+Microbump `1.1.8 → 1.1.9` para usar a tecla configurada na dica de restauração.
+
+### ✅ Correção
+
+1. **Dica pós-hide usa o atalho real de mostrar** — `src/main/index.js`
+   - A notificação "Done! / Press Ctrl+F6 to restore" citava o atalho padrão fixo. Como as teclas são customizáveis, agora a dica usa a tecla de mostrar configurada pelo usuário (troca o literal `Ctrl+F6` pelo `config.showKey`; sem mudança quando o atalho é o padrão).
+
+### 🏷️ Versão
+
+- `package.json` / `package-lock.json`: `1.1.8 → 1.1.9` (o `AppxManifest.xml` usa `Version="${version}"` e herda automaticamente).
+
+---
 ## 🚀 1.1.8 (9 de Setembro de 2026)
 
 Microbump `1.1.7 → 1.1.8` para reduzir relatórios de "hang" no encerramento da sessão do Windows.

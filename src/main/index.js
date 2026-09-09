@@ -2952,7 +2952,14 @@ function getRevealHintNotificationTitle() {
 }
 
 function getRevealHintNotificationBody() {
-    return lang.REVEAL_HINT_NOTIFICATION_BODY || 'Press Ctrl+F6 to restore. Disable hints in Options.';
+    const base = lang.REVEAL_HINT_NOTIFICATION_BODY || 'Press Ctrl+F6 to restore. Disable hints in Options.';
+    // As traduções citam o atalho padrão "Ctrl+F6", mas as teclas são
+    // customizáveis — usa o atalho REAL de mostrar configurado pelo usuário.
+    const showKey = config && config.showKey ? String(config.showKey) : 'Ctrl+F6';
+    if (showKey !== 'Ctrl+F6' && base.indexOf('Ctrl+F6') !== -1) {
+        return base.split('Ctrl+F6').join(showKey);
+    }
+    return base;
 }
 
 function getRevealHintNotificationDisableAction() {
