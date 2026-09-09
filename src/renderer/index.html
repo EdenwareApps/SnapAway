@@ -989,6 +989,10 @@
 
       function updateDisplay(text) {
         console.log('updateDisplay', text);
+        // Guard (fix ELECTRON-11): se o elemento #password não estiver no DOM
+        // (ex.: chegou mensagem de auth antes do render do keypad/num outro
+        // modo), evita "Cannot set properties of null (setting 'innerHTML')".
+        if (!passwordDisplay) return;
         if (typeof text === 'string') {
           passwordDisplay.innerHTML = text;
         } else if (password.length > 0) {

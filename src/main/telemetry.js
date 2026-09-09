@@ -201,6 +201,16 @@ function initMainTelemetry(app, options = {}) {
       attachStacktrace: true,
       autoSessionTracking: false,
       beforeSend(event) {
+        // Ruído (ELECTRON-8): a integração child-process do @sentry/electron
+        // captura automaticamente "'renderer' process exited with 'launch-failed'"
+        // (renderer do OVERLAY não sobe — ambiental, AV/GPU/recursos). Isso é
+        // FORA do nosso captureTelemetryEvent, então suprimimos aqui no
+        // beforeSend. O log persistente continua registrando.
+        const exValues = event.exception && event.exception.values;
+        if (exValues && exValues.some(v => v && /process exited with 'launch-failed'/.test(v.value || ''))) {
+          return null;
+        }
+
         // Título útil dos issues de telemetria: quando o evento tem a tag
         // eventName, garante que o título mostre o NOME do evento (ex.:
         // "app.render-process-gone") em vez do culprit genérico

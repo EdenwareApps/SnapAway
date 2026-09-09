@@ -634,6 +634,9 @@
     // Reset the collapsed filter box whenever navigating (e.g. going to options)
     viewFilterOpen = false;
     const icon = document.querySelector('.cet-icon-options');
+    // Guard (fix ELECTRON-11): titlebar custom pode não estar no DOM ainda — o
+    // estado de navegação já foi atualizado acima; só o ícone é opcional.
+    if (!icon) return;
     if (container === 'options') {
       icon.innerHTML = '<i class="fas fa-chevron-left"></i><span>'+ lang.BACK +'</span>';
       icon.title = lang.BACK;

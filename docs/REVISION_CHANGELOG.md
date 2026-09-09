@@ -1,4 +1,24 @@
 # Changelog - Revisão de Implementação Microsoft Store
+## 🚀 1.1.6 (9 de Setembro de 2026)
+
+Microbump `1.1.5 → 1.1.6` com correções de estabilidade/renderer e redução de ruído no Sentry.
+
+### ✅ Correções
+
+1. **Renderer: "Cannot set properties of null (setting 'innerHTML')" (ELECTRON-11)** — `src/renderer/index.html` + `src/renderer/App.svelte`
+   - Sintoma: erro em handler de IPC do renderer ao setar `innerHTML` em elemento ausente do DOM.
+   - Causa: `updateDisplay()` (`passwordDisplay`/`#password`) e `toggleContainer()` (`icon`/`.cet-icon-options`) sem checagem de nulidade.
+   - Fix: guardas `if (!element) return` antes dos `innerHTML` nesses dois pontos.
+
+2. **Sentry: ruído do overlay "launch-failed" ainda virava issue (ELECTRON-8)** — `src/main/telemetry.js`
+   - Causa: o ELECTRON-8 vem da integração `child-process` do @sentry/electron (captura automática de `'renderer' process exited with 'launch-failed'`), fora do nosso `captureTelemetryEvent`.
+   - Fix: `beforeSend` agora descarta (`return null`) eventos com `process exited with 'launch-failed'` — complementa a supressão já existente.
+
+### 🏷️ Versão
+
+- `package.json` / `package-lock.json`: `1.1.5 → 1.1.6` (o `AppxManifest.xml` usa `Version="${version}"` e herda automaticamente).
+
+---
 ## 🚀 1.1.4 (31 de Agosto de 2026)
 
 Microbump `1.1.3 → 1.1.4` com correções baseadas na revisão dos issues do Sentry da release `SnapAway@1.1.3`.
