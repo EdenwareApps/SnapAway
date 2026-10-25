@@ -232,6 +232,7 @@ contextBridge.exposeInMainWorld('api', {
   onToggleTitlebar: callback => ipcRenderer.on('toggle-titlebar', callback),
   onResizeWindow: callback => ipcRenderer.on('resize-window', callback),
   onShakeFilters: callback => ipcRenderer.on('shake-filters', callback),
+  onToast: callback => ipcRenderer.on('show-toast', callback),
   onAuthCanceled: callback => ipcRenderer.on('auth-canceled', callback),
   onWindowMove: callback => ipcRenderer.on('window-move', callback),
   onWindowMaximizedChanged: callback => ipcRenderer.on('window-maximized-changed', callback),

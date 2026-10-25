@@ -2925,17 +2925,23 @@ async function updateConfig(newConfig) {
     system.updateConfig(config);
 
     globalShortcut.unregisterAll();
-    try {
-        globalShortcut.register(config.hideKey, () => {
-            console.log('[MAIN] Hide key pressed - calling shortcutAction');
-            shortcutAction('hide', 'shortcut');
-        });
-        globalShortcut.register(config.showKey, () => {
-            console.log('[MAIN] Show key pressed - calling shortcutAction');
-            shortcutAction('show', 'shortcut');
-        });
-    } catch (error) {
-        console.error(error);
+    if (shortcutsPaused) {
+        // Renderer está gravando uma tecla / ensinando o atalho na prática do
+        // onboarding: não registrar de volta agora.
+        console.log('[MAIN] Config changed while shortcuts are paused: keeping them unregistered');
+    } else {
+        try {
+            globalShortcut.register(config.hideKey, () => {
+                console.log('[MAIN] Hide key pressed - calling shortcutAction');
+                shortcutAction('hide', 'shortcut');
+            });
+            globalShortcut.register(config.showKey, () => {
+                console.log('[MAIN] Show key pressed - calling shortcutAction');
+                shortcutAction('show', 'shortcut');
+            });
+        } catch (error) {
+            console.error(error);
+        }
     }
 
     // Handle titlebar overlay toggle
@@ -3118,11 +3124,41 @@ ipcMain.on('force-auth-resize', () => {
     resizeForAuth();
 });
 
+// Rede de segurança: se o renderer recarregar ou travar durante a prática do
+// onboarding, os atalhos não podem ficar mortos até o app ser reiniciado.
+let shortcutsPausedWatchdog = null;
+// Enquanto o renderer grava uma tecla (ou o onboarding ensina a tecla na
+// prática) os atalhos precisam ficar desregistrados. O flag impede que o
+// handler de config (que roda a cada updateConfig) os registre de volta.
+let shortcutsPaused = false;
+
+function registerHideShowShortcuts() {
+    try { globalShortcut.unregisterAll(); } catch (e) { }
+    try {
+        if (config && config.hideKey) globalShortcut.register(config.hideKey, () => shortcutAction('hide', 'shortcut'));
+    } catch (err) {
+        console.warn('[MAIN] Could not register hideKey on resume:', err && err.message ? err.message : err);
+    }
+    try {
+        if (config && config.showKey) globalShortcut.register(config.showKey, () => shortcutAction('show', 'shortcut'));
+    } catch (err) {
+        console.warn('[MAIN] Could not register showKey on resume:', err && err.message ? err.message : err);
+    }
+}
+
 // Allow renderer to temporarily pause/resume global shortcuts while recording
 ipcMain.handle('pause-global-shortcuts', async () => {
     try {
         console.log('[MAIN] Pausing global shortcuts (unregisterAll)');
+        shortcutsPaused = true;
         globalShortcut.unregisterAll();
+        if (shortcutsPausedWatchdog) clearTimeout(shortcutsPausedWatchdog);
+        shortcutsPausedWatchdog = setTimeout(() => {
+            shortcutsPausedWatchdog = null;
+            shortcutsPaused = false;
+            console.warn('[MAIN] Global shortcuts stayed paused for too long, re-registering them');
+            registerHideShowShortcuts();
+        }, 5 * 60 * 1000);
         return { success: true };
     } catch (err) {
         console.error('[MAIN] Error pausing global shortcuts:', err);
@@ -3133,17 +3169,12 @@ ipcMain.handle('pause-global-shortcuts', async () => {
 ipcMain.handle('resume-global-shortcuts', async () => {
     try {
         console.log('[MAIN] Resuming global shortcuts (registering hide/show keys)');
-        try { globalShortcut.unregisterAll(); } catch (e) { }
-        try {
-            if (config && config.hideKey) globalShortcut.register(config.hideKey, () => shortcutAction('hide', 'shortcut'));
-        } catch (err) {
-            console.warn('[MAIN] Could not register hideKey on resume:', err && err.message ? err.message : err);
+        shortcutsPaused = false;
+        if (shortcutsPausedWatchdog) {
+            clearTimeout(shortcutsPausedWatchdog);
+            shortcutsPausedWatchdog = null;
         }
-        try {
-            if (config && config.showKey) globalShortcut.register(config.showKey, () => shortcutAction('show', 'shortcut'));
-        } catch (err) {
-            console.warn('[MAIN] Could not register showKey on resume:', err && err.message ? err.message : err);
-        }
+        registerHideShowShortcuts();
         return { success: true };
     } catch (err) {
         console.error('[MAIN] Error resuming global shortcuts:', err);
@@ -3745,11 +3776,26 @@ const toggleUIMode = (mode, source = '') => {
     }
 }
 
+// Aviso curto e transitório desenhado dentro da janela principal (ex.: atalho de
+// ocultar pressionado sem nenhuma janela-alvo escolhida).
+function showToastInMainWindow(message, tone = 'warning', duration = 4500) {
+    if (!message) return;
+    if (!window || !window.webContents) return;
+    try {
+        window.webContents.send('show-toast', { message, tone, duration });
+    } catch (err) {
+        console.warn('[MAIN] Could not send toast to renderer:', err && err.message ? err.message : err);
+    }
+}
+
 function handleHideWithoutFilters(source = '') {
     console.log(`[MAIN] Hide requested with no filters (source: ${source}) -> forcing main mode`);
 
     if (window && window.webContents) {
         window.webContents.send('shake-filters');
+        // O shake sozinho é ambíguo: a maioria dos usuários não entende que
+        // precisa escolher uma janela-alvo antes de usar o atalho.
+        showToastInMainWindow(lang.TOAST_NO_TARGET || 'No window selected yet — choose one in the list.');
     }
 
     if (global.uiMode === 'float') {

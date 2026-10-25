@@ -1,6 +1,6 @@
 ﻿<script>
 
-  import { onMount } from 'svelte';
+  import { onMount, onDestroy } from 'svelte';
   import TitleList from './components/TitleList.svelte';
   import ProcessList from './components/ProcessList.svelte';
   import ClassList from './components/ClassList.svelte';
@@ -9,6 +9,7 @@
   import TrayGuideModal from './components/TrayGuideModal.svelte';
   import ReviewModal from './components/ReviewModal.svelte';
   import ProModal from './pro/ProModal.svelte';
+  import { KEYBOARD_ROWS, acceleratorKeyLabels, matchesAccelerator } from './utils/accelerator.mjs';
 
   let viewFilterCaseSensitive = true;
   let viewFilterFocused = false;
@@ -56,10 +57,32 @@
   let isFirstRun = false; // Onboarding mode for first-time users
   let onboardingStartupBusy = false;
   let onboardingStartupMessage = '';
+  // Onboarding guiado: 1 = escolher a janela-alvo, 2 = aprender a ocultar,
+  // 3 = aprender a restaurar, 4 = concluído. Nenhum passo avança sozinho: a
+  // tecla precisa ser pressionada de verdade (ver handleOnboardingKeydown).
+  let onboardingStep = 1;
+  let onboardingTarget = null;
+  let onboardingTargetKey = '';
+  let onboardingMisses = 0;
+  let shortcutsPausedForOnboarding = false;
+  let onboardingDemoHidden = false;
+  let onboardingCloseTimer = null;
+  let toast = null;
+  let toastTimer = null;
+  let toastSeq = 0;
   let appVersion = '';
   $: hideShortcut = (config && config.hideKey) ? config.hideKey : 'F6';
   $: showShortcut = (config && config.showKey) ? config.showKey : 'Ctrl+F6';
   $: aboutUrl = (config && config.aboutUrl) ? config.aboutUrl : 'https://edenware.app/snapaway';
+  // Janelas que podem virar alvo do onboarding (as mesmas que o app oculta).
+  $: onboardingCandidates = (processes || [])
+    .filter((proc) => proc && proc.hwnd && (proc.title || proc.process))
+    .map((proc) => ({ ...proc, key: String(proc.hwnd) }))
+    .slice(0, 80);
+  $: onboardingShortcut = onboardingStep === 3 ? showShortcut : hideShortcut;
+  $: onboardingHighlight = (onboardingStep === 2 || onboardingStep === 3)
+    ? acceleratorKeyLabels(onboardingShortcut)
+    : [];
 
   function t(key, params = []) {
     let value = (lang && lang[key]) || defaultWelcomeTexts[key] || key;
@@ -72,6 +95,12 @@
   function markFirstRunComplete() {
     if (!isFirstRun) return;
     isFirstRun = false;
+    if (onboardingCloseTimer) {
+      clearTimeout(onboardingCloseTimer);
+      onboardingCloseTimer = null;
+    }
+    // Nunca deixar os atalhos pausados para trás (ver beginOnboardingPractice).
+    endOnboardingPractice();
     try {
       localStorage.setItem('snapawayFirstRun', 'false');
     } catch (error) {
@@ -81,6 +110,156 @@
     if (window.api && window.api.updateConfig) {
       window.api.updateConfig({ firstRun: false });
     }
+    if (window.api && window.api.trackEvent) {
+      window.api.trackEvent('onboarding_completed', { step: onboardingStep });
+    }
+  }
+
+  // --- Onboarding: prática com a tecla física -------------------------------
+  // Os atalhos globais são desregistrados durante a prática, senão o sistema
+  // intercepta a tecla e o renderer nunca recebe o keydown.
+  async function beginOnboardingPractice() {
+    if (shortcutsPausedForOnboarding) return;
+    shortcutsPausedForOnboarding = true;
+    try {
+      if (window.api && window.api.pauseGlobalShortcuts) {
+        await window.api.pauseGlobalShortcuts();
+      }
+    } catch (error) {
+      console.warn('[App.svelte] Could not pause global shortcuts for onboarding:', error);
+    }
+  }
+
+  async function endOnboardingPractice() {
+    // A janela-alvo pode ter sido ocultada de verdade no passo 2: nunca deixar
+    // o usuário com a janela dele escondida ao sair da prática.
+    if (onboardingDemoHidden) {
+      onboardingDemoHidden = false;
+      try {
+        await showMatchingWindows(onboardingTarget);
+      } catch (error) {
+        console.warn('[App.svelte] Could not restore the onboarding target window:', error);
+      }
+    }
+    if (!shortcutsPausedForOnboarding) return;
+    shortcutsPausedForOnboarding = false;
+    try {
+      if (window.api && window.api.resumeGlobalShortcuts) {
+        await window.api.resumeGlobalShortcuts();
+      }
+    } catch (error) {
+      console.warn('[App.svelte] Could not resume global shortcuts after onboarding:', error);
+    }
+  }
+
+  function selectOnboardingTarget(candidate) {
+    if (!candidate) return;
+    onboardingTargetKey = candidate.key;
+    onboardingTarget = {
+      value: candidate.process,
+      type: 'process',
+      icon: candidate.icon,
+      process: candidate.process,
+      hwnd: candidate.hwnd,
+      title: candidate.title,
+      className: candidate.className,
+      executable: candidate.executable
+    };
+  }
+
+  async function confirmOnboardingTarget() {
+    if (!onboardingTarget) return;
+    const target = onboardingTarget;
+    await beginOnboardingPractice();
+    await addFilter(target);
+    const added = (config.filters || []).some((filter) => filter.value == target.value && filter.type == target.type);
+    if (!added) {
+      await endOnboardingPractice();
+      return;
+    }
+    onboardingMisses = 0;
+    onboardingStep = 2;
+    if (window.api && window.api.trackEvent) {
+      window.api.trackEvent('onboarding_target_selected', {});
+    }
+  }
+
+  async function handleOnboardingKeydown(event) {
+    if (!isFirstRun || !event) return;
+    if (onboardingStep !== 2 && onboardingStep !== 3) return;
+    if (event.repeat) return;
+
+    const targetTag = event.target && event.target.tagName ? String(event.target.tagName).toUpperCase() : '';
+    if (targetTag === 'INPUT' || targetTag === 'TEXTAREA' || targetTag === 'SELECT') return;
+
+    if (onboardingStep === 2) {
+      if (matchesAccelerator(event, hideShortcut)) {
+        event.preventDefault();
+        onboardingMisses = 0;
+        onboardingStep = 3;
+        // O atalho global está pausado, então a tecla não oculta nada por si
+        // só: escondemos a janela-alvo aqui para a pessoa ver o efeito real.
+        onboardingDemoHidden = true;
+        hideMatchingWindows(onboardingTarget);
+        if (window.api && window.api.trackEvent) {
+          window.api.trackEvent('onboarding_hide_key_learned', { key: hideShortcut });
+        }
+      } else {
+        onboardingMisses += 1;
+      }
+      return;
+    }
+
+    if (matchesAccelerator(event, showShortcut)) {
+      event.preventDefault();
+      onboardingMisses = 0;
+      onboardingStep = 4;
+      await endOnboardingPractice();
+      if (window.api && window.api.trackEvent) {
+        window.api.trackEvent('onboarding_show_key_learned', { key: showShortcut });
+      }
+      if (onboardingCloseTimer) clearTimeout(onboardingCloseTimer);
+      onboardingCloseTimer = setTimeout(() => {
+        onboardingCloseTimer = null;
+        markFirstRunComplete();
+      }, 1800);
+      return;
+    }
+    onboardingMisses += 1;
+  }
+
+  // Saída de emergência: só aparece depois de várias teclas erradas, para não
+  // transformar o passo em um beco sem saída (teclado sem F6, tecla capturada
+  // por outro app, etc).
+  async function skipOnboardingPractice() {
+    if (onboardingStep !== 2 && onboardingStep !== 3) return;
+    const skippedStep = onboardingStep;
+    onboardingStep = 4;
+    await endOnboardingPractice();
+    if (window.api && window.api.trackEvent) {
+      window.api.trackEvent('onboarding_practice_skipped', { step: skippedStep });
+    }
+    if (onboardingCloseTimer) clearTimeout(onboardingCloseTimer);
+    onboardingCloseTimer = setTimeout(() => {
+      onboardingCloseTimer = null;
+      markFirstRunComplete();
+    }, 1200);
+  }
+
+  // --- Toast (avisos curtos vindos do processo principal) -------------------
+  function showToast(payload) {
+    if (!payload || !payload.message) return;
+    const duration = Number(payload.duration) > 0 ? Number(payload.duration) : 4500;
+    toast = {
+      id: ++toastSeq,
+      message: payload.message,
+      tone: payload.tone || 'warning'
+    };
+    if (toastTimer) clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => {
+      toast = null;
+      toastTimer = null;
+    }, duration);
   }
 
   async function enableStartupFromOnboarding() {
@@ -302,7 +481,9 @@
     console.log('[App.svelte] Current visible state:', visible);
     config.filters.push(filter);
     config.filters = config.filters; // force svelte to update
-    markFirstRunComplete();
+    // Durante o onboarding o guia não deve fechar sozinho ao escolher a janela:
+    // os passos seguintes ensinam a tecla na prática.
+    if (!isFirstRun) markFirstRunComplete();
     updateConfig();
     
     // Se as janelas estão ocultas, ocultar todas as janelas correspondentes ao filtro imediatamente
@@ -1007,6 +1188,12 @@
     });
   }
 
+  if (window.api.onToast) {
+    window.api.onToast((_, payload) => {
+      showToast(payload);
+    });
+  }
+
     if (window.api.onIcon) {
     window.api.onIcon((_, icons) => {
       refreshProcesses();
@@ -1203,10 +1390,27 @@
       refreshProcesses();
     });
 
+    // Prática do onboarding: capturado em fase de captura para chegar antes de
+    // qualquer handler de componente enquanto os atalhos globais estão pausados.
+    window.addEventListener('keydown', handleOnboardingKeydown, true);
+
     // Adjust select width after mount
     setTimeout(() => {
       adjustSelectWidth();
     }, 100);
+  });
+
+  onDestroy(() => {
+    window.removeEventListener('keydown', handleOnboardingKeydown, true);
+    if (onboardingCloseTimer) {
+      clearTimeout(onboardingCloseTimer);
+      onboardingCloseTimer = null;
+    }
+    if (toastTimer) {
+      clearTimeout(toastTimer);
+      toastTimer = null;
+    }
+    endOnboardingPractice();
   });
 
 </script>
@@ -1214,25 +1418,81 @@
 {#if ready}
   <main class="ghostly-theme">
     {#if isFirstRun}
-      <div class="onboarding-overlay" role="dialog" aria-modal="true" aria-label="First time user guide">
+      <div class="onboarding-overlay" role="dialog" aria-modal="true" aria-label={t('WELCOME_TO_SNAPAWAY')}>
         <div class="onboarding-card">
-          <h2>{t('WELCOME_TO_SNAPAWAY')}</h2>
-          <p>{t('ONBOARDING_STEP_1')}</p>
-          <ol>
-            <li>{t('ONBOARDING_STEP_2')}</li>
-            <li>{t('ONBOARDING_STEP_3', [hideShortcut])}</li>
-            <li>{t('ONBOARDING_STEP_4', [showShortcut])}</li>
-          </ol>
-          <p class="onboarding-startup-copy">{t('ONBOARDING_STARTUP_HINT') || 'If you want, SnapAway can start with Windows.'}</p>
-          {#if onboardingStartupMessage}
-            <p class="onboarding-startup-status">{onboardingStartupMessage}</p>
-          {/if}
-          <div class="onboarding-actions">
-            <button class="onboarding-action onboarding-action-secondary" on:click={markFirstRunComplete}>{t('NOT_NOW') || 'Not now'}</button>
-            <button class="onboarding-action" on:click={enableStartupFromOnboarding} disabled={onboardingStartupBusy}>
-              {onboardingStartupBusy ? (t('LOADING') || 'Please wait...') : (t('ENABLE_STARTUP_WITH_WINDOWS') || 'Enable startup with Windows')}
-            </button>
+          <div class="onboarding-progress" aria-hidden="true">
+            <span class="onboarding-dot" class:is-active={onboardingStep === 1} class:is-done={onboardingStep > 1}>1</span>
+            <span class="onboarding-dot" class:is-active={onboardingStep === 2} class:is-done={onboardingStep > 2}>2</span>
+            <span class="onboarding-dot" class:is-active={onboardingStep === 3} class:is-done={onboardingStep > 3}>3</span>
           </div>
+
+          {#if onboardingStep === 1}
+            <h2>{t('WELCOME_TO_SNAPAWAY')}</h2>
+            <p>{t('ONBOARDING_STEP_1')}</p>
+            <p class="onboarding-step-copy">{t('ONBOARDING_STEP_2')}</p>
+            <div class="onboarding-target-list" role="listbox" aria-label={t('ONBOARDING_STEP_2')}>
+              {#each onboardingCandidates as candidate (candidate.key)}
+                <button
+                  type="button"
+                  role="option"
+                  aria-selected={onboardingTargetKey === candidate.key}
+                  class="onboarding-target"
+                  class:is-selected={onboardingTargetKey === candidate.key}
+                  on:click={() => selectOnboardingTarget(candidate)}
+                >
+                  {#if candidate.icon}
+                    <img src={candidate.icon} alt="" aria-hidden="true" />
+                  {:else}
+                    <i class="fas fa-window-maximize" aria-hidden="true"></i>
+                  {/if}
+                  <span class="onboarding-target-copy">
+                    <strong>{candidate.title || candidate.process}</strong>
+                    <small>{candidate.process}{candidate.className ? ` · ${candidate.className}` : ''}</small>
+                  </span>
+                  {#if onboardingTargetKey === candidate.key}
+                    <i class="fas fa-check onboarding-target-check" aria-hidden="true"></i>
+                  {/if}
+                </button>
+              {/each}
+            </div>
+            <p class="onboarding-startup-copy">{t('ONBOARDING_STARTUP_HINT') || 'If you want, SnapAway can start with Windows.'}</p>
+            {#if onboardingStartupMessage}
+              <p class="onboarding-startup-status">{onboardingStartupMessage}</p>
+            {/if}
+            <div class="onboarding-actions">
+              <button class="onboarding-action onboarding-action-secondary" on:click={enableStartupFromOnboarding} disabled={onboardingStartupBusy}>
+                {onboardingStartupBusy ? (t('LOADING') || 'Please wait...') : (t('ENABLE_STARTUP_WITH_WINDOWS') || 'Enable startup with Windows')}
+              </button>
+              <button class="onboarding-action" on:click={confirmOnboardingTarget} disabled={!onboardingTarget}>
+                {t('ONBOARDING_NEXT') || 'Next'}
+              </button>
+            </div>
+            <button class="onboarding-skip" on:click={markFirstRunComplete}>{t('NOT_NOW') || 'Not now'}</button>
+          {:else if onboardingStep === 2 || onboardingStep === 3}
+            <h2>{onboardingStep === 2 ? t('ONBOARDING_STEP_3', [hideShortcut]) : t('ONBOARDING_STEP_4', [showShortcut])}</h2>
+            <p class="onboarding-step-copy onboarding-press-copy">{t('ONBOARDING_PRESS_KEY', [onboardingShortcut])}</p>
+            <div class="onboarding-keyboard" aria-hidden="true">
+              {#each KEYBOARD_ROWS as row}
+                <div class="onboarding-keyboard-row">
+                  {#each row as keyLabel}
+                    <span
+                      class="onboarding-key"
+                      class:is-target={onboardingHighlight.includes(keyLabel)}
+                      class:is-wide={keyLabel.length > 3}
+                    >{keyLabel}</span>
+                  {/each}
+                </div>
+              {/each}
+            </div>
+            {#if onboardingMisses >= 3}
+              <button class="onboarding-skip" on:click={skipOnboardingPractice}>{t('NOT_NOW') || 'Not now'}</button>
+            {/if}
+          {:else}
+            <div class="onboarding-ready">
+              <i class="fas fa-check-circle" aria-hidden="true"></i>
+              <h2>{t('ONBOARDING_READY') || 'All set!'}</h2>
+            </div>
+          {/if}
         </div>
       </div>
     {/if}
@@ -1381,6 +1641,13 @@
       on:close={handleReviewModalClose}
     />
   {/if}
+
+  {#if toast}
+    <div class="app-toast" class:is-warning={toast.tone === 'warning'} role="status" aria-live="polite">
+      <i class="fas {toast.tone === 'warning' ? 'fa-exclamation-circle' : 'fa-info-circle'}" aria-hidden="true"></i>
+      <span>{toast.message}</span>
+    </div>
+  {/if}
 </main>
 {/if}
 
@@ -1461,32 +1728,71 @@
     position: fixed;
     inset: 0;
     background: rgba(0,0,0,.6);
-    z-index: 10000;
+    /* Abaixo dos modais (ProModal = 1000) para que um upsell ainda apareça
+       por cima caso o limite de apps seja atingido durante o onboarding. */
+    z-index: 900;
     display: flex;
     align-items: center;
     justify-content: center;
-    padding: 2rem;
+    padding: 1.5rem;
   }
 
   .onboarding-card {
     background: Canvas;
     border: 1px solid ButtonBorder;
     border-radius: 12px;
-    max-width: 450px;
+    max-width: 540px;
     width: 100%;
+    max-height: 88vh;
+    box-sizing: border-box;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
     padding: 1.25rem;
     box-shadow: 0 0 25px rgba(0,0,0,.35);
     color: CanvasText;
   }
 
+  .onboarding-progress {
+    display: flex;
+    gap: .4rem;
+    margin-bottom: .6rem;
+  }
+
+  .onboarding-dot {
+    width: 1.5rem;
+    height: 1.5rem;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: .82rem;
+    font-weight: 600;
+    border: 1px solid ButtonBorder;
+    color: ButtonText;
+    background: transparent;
+  }
+
+  .onboarding-dot.is-active {
+    background: Highlight;
+    border-color: Highlight;
+    color: HighlightText;
+  }
+
+  .onboarding-dot.is-done {
+    background: transparent;
+    color: Highlight;
+    border-color: Highlight;
+  }
+
   .onboarding-card h2 {
     margin-top: 0;
-    margin-bottom: .75rem;
+    margin-bottom: .5rem;
   }
 
   .onboarding-card p,
   .onboarding-card ol {
-    margin-bottom: .75rem;
+    margin-bottom: .5rem;
     line-height: 1.4;
     list-style: none;
   }
@@ -1520,8 +1826,8 @@
   }
 
   .onboarding-startup-copy {
-    margin-top: 0.35rem;
-    margin-bottom: 0.45rem;
+    margin-top: 0.25rem;
+    margin-bottom: 0.35rem;
     opacity: 0.9;
   }
 
@@ -1530,6 +1836,242 @@
     margin-bottom: 0.5rem;
     font-size: 0.92rem;
     opacity: 0.85;
+  }
+
+  .onboarding-step-copy {
+    margin-top: 0;
+  }
+
+  .onboarding-target-list {
+    display: flex;
+    flex-direction: column;
+    gap: .3rem;
+    overflow-y: auto;
+    flex: 1 1 auto;
+    min-height: 3.5rem;
+    margin: .3rem 0 .55rem;
+    padding: .2rem;
+    border: 1px solid ButtonBorder;
+    border-radius: 8px;
+    background: Field;
+  }
+
+  .onboarding-target {
+    display: flex;
+    align-items: center;
+    gap: .6rem;
+    width: 100%;
+    text-align: left;
+    padding: .35rem .5rem;
+    border-radius: 6px;
+    border: 1px solid transparent;
+    background: transparent;
+    color: FieldText;
+  }
+
+  .onboarding-target:hover,
+  .onboarding-target:focus {
+    background: rgba(127,127,127,.18);
+  }
+
+  .onboarding-target.is-selected {
+    border-color: Highlight;
+    background: rgba(127,127,127,.22);
+  }
+
+  .onboarding-target img {
+    width: 20px;
+    height: 20px;
+    object-fit: contain;
+    flex: 0 0 auto;
+  }
+
+  .onboarding-target > i:not(.onboarding-target-check) {
+    width: 20px;
+    flex: 0 0 auto;
+    text-align: center;
+    opacity: .7;
+  }
+
+  .onboarding-target-copy {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    flex: 1 1 auto;
+  }
+
+  .onboarding-target-copy strong,
+  .onboarding-target-copy small {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .onboarding-target-copy small {
+    font-size: .76rem;
+    opacity: .7;
+  }
+
+  .onboarding-target-check {
+    flex: 0 0 auto;
+    color: Highlight;
+  }
+
+  .onboarding-card .onboarding-action:disabled {
+    opacity: .5;
+    cursor: not-allowed;
+  }
+
+  .onboarding-card .onboarding-action:disabled:hover {
+    background: Highlight;
+    color: HighlightText;
+  }
+
+  .onboarding-keyboard {
+    display: flex;
+    flex-direction: column;
+    gap: .25rem;
+    margin: .35rem 0 .9rem;
+    padding: .5rem;
+    border: 1px solid ButtonBorder;
+    border-radius: 8px;
+    background: rgba(127,127,127,.08);
+  }
+
+  .onboarding-keyboard-row {
+    display: flex;
+    gap: .25rem;
+  }
+
+  .onboarding-key {
+    flex: 1 1 0;
+    min-width: 0;
+    padding: .3rem .1rem;
+    font-size: .7rem;
+    line-height: 1;
+    text-align: center;
+    border: 1px solid ButtonBorder;
+    border-radius: 4px;
+    color: ButtonText;
+    background: rgba(127,127,127,.12);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    transition: background .15s ease, color .15s ease, box-shadow .15s ease;
+  }
+
+  .onboarding-key.is-wide {
+    flex-grow: 1.7;
+    font-size: .58rem;
+  }
+
+  .onboarding-keyboard-row:last-child .onboarding-key {
+    flex-grow: 1.8;
+  }
+
+  .onboarding-key.is-target {
+    background: Highlight;
+    color: HighlightText;
+    border-color: Highlight;
+    font-weight: 700;
+    animation: onboarding-key-blink 1s ease-in-out infinite;
+  }
+
+  @keyframes onboarding-key-blink {
+    0%, 100% {
+      box-shadow: 0 0 0 0 rgba(127,127,127,0);
+    }
+    50% {
+      box-shadow: 0 0 0 4px rgba(127,127,127,.45);
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .onboarding-key.is-target {
+      animation: none;
+      box-shadow: 0 0 0 3px rgba(127,127,127,.45);
+    }
+  }
+
+  .onboarding-press-copy {
+    font-weight: 600;
+  }
+
+  .onboarding-ready {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: .5rem;
+    padding: 1.25rem 0;
+  }
+
+  .onboarding-ready i {
+    font-size: 2.4rem;
+    color: Highlight;
+  }
+
+  .onboarding-ready h2 {
+    margin: 0;
+  }
+
+  .onboarding-skip {
+    align-self: center;
+    margin-top: .15rem;
+    background: transparent;
+    border: none;
+    color: ButtonText;
+    opacity: .65;
+    font-size: .82rem;
+    text-decoration: underline;
+  }
+
+  .onboarding-skip:hover {
+    opacity: 1;
+  }
+
+  .app-toast {
+    position: fixed;
+    left: 50%;
+    bottom: 1.5rem;
+    transform: translateX(-50%);
+    z-index: 4000;
+    display: flex;
+    align-items: center;
+    gap: .5rem;
+    max-width: min(90vw, 22rem);
+    padding: .55rem .85rem;
+    border-radius: 999px;
+    background: Canvas;
+    border: 1px solid ButtonBorder;
+    color: CanvasText;
+    box-shadow: 0 6px 20px rgba(0,0,0,.35);
+    font-size: .86rem;
+    pointer-events: none;
+    animation: app-toast-in .18s ease-out;
+  }
+
+  .app-toast.is-warning i {
+    color: #e8a33d;
+  }
+
+  .app-toast span {
+    min-width: 0;
+  }
+
+  @keyframes app-toast-in {
+    from {
+      opacity: 0;
+      transform: translateX(-50%) translateY(6px);
+    }
+    to {
+      opacity: 1;
+      transform: translateX(-50%) translateY(0);
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .app-toast {
+      animation: none;
+    }
   }
 
   main div header {

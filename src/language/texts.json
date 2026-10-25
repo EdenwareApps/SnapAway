@@ -165,7 +165,11 @@
     "PRO_UPSELL_TITLE": "Hide even faster with Pro",
     "PRO_UPSELL_CTA": "I want it",
     "PRO_UPSELL_DISMISS": "Dismiss",
-    "PRO_FEATURE_SPECIFIC_MESSAGE": "{0} is a premium feature. Activate Lifetime Unlock to enable it."
+    "PRO_FEATURE_SPECIFIC_MESSAGE": "{0} is a premium feature. Activate Lifetime Unlock to enable it.",
+    "TOAST_NO_TARGET": "No window selected yet — choose one in the list.",
+    "ONBOARDING_NEXT": "Next",
+    "ONBOARDING_PRESS_KEY": "Press {0} now. This window must be focused.",
+    "ONBOARDING_READY": "All set! SnapAway is ready to use."
   },
   "ar": {
     "ABOUT": "حول",
@@ -333,7 +337,11 @@
     "SHOW_TITLEBAR_OVERLAY": "إظهار أيقونة التراكب على أشرطة عنوان النوافذ",
     "PRO_UPSELL_TITLE": "أخفِ أسرع مع Pro",
     "PRO_UPSELL_CTA": "أريده",
-    "PRO_UPSELL_DISMISS": "تجاهل"
+    "PRO_UPSELL_DISMISS": "تجاهل",
+    "TOAST_NO_TARGET": "لم يتم اختيار أي نافذة بعد — اختر واحدة من القائمة.",
+    "ONBOARDING_NEXT": "التالي",
+    "ONBOARDING_PRESS_KEY": "اضغط {0} الآن. يجب أن تكون هذه النافذة في المقدمة.",
+    "ONBOARDING_READY": "كل شيء جاهز! SnapAway جاهز للاستخدام."
   },
   "cs": {
     "ABOUT": "O aplikaci",
@@ -501,7 +509,11 @@
     "SHOW_TITLEBAR_OVERLAY": "Zobrazit ikonu překryvu v záhlaví oken",
     "PRO_UPSELL_TITLE": "Skrývejte ještě rychleji s Pro",
     "PRO_UPSELL_CTA": "Chci to",
-    "PRO_UPSELL_DISMISS": "Zavřít"
+    "PRO_UPSELL_DISMISS": "Zavřít",
+    "TOAST_NO_TARGET": "Zatím není vybráno žádné okno — vyberte jedno v seznamu.",
+    "ONBOARDING_NEXT": "Další",
+    "ONBOARDING_PRESS_KEY": "Nyní stiskněte {0}. Toto okno musí být aktivní.",
+    "ONBOARDING_READY": "Vše je připraveno! SnapAway můžete používat."
   },
   "de": {
     "ABOUT": "Über",
@@ -669,7 +681,11 @@
     "SHOW_TITLEBAR_OVERLAY": "Überlagerungssymbol in der Fenstertitelleiste anzeigen",
     "PRO_UPSELL_TITLE": "Mit Pro noch schneller ausblenden",
     "PRO_UPSELL_CTA": "Ich möchte es",
-    "PRO_UPSELL_DISMISS": "Verwerfen"
+    "PRO_UPSELL_DISMISS": "Verwerfen",
+    "TOAST_NO_TARGET": "Noch kein Fenster ausgewählt – wähle eines in der Liste aus.",
+    "ONBOARDING_NEXT": "Weiter",
+    "ONBOARDING_PRESS_KEY": "Drücke jetzt {0}. Dieses Fenster muss den Fokus haben.",
+    "ONBOARDING_READY": "Alles bereit! SnapAway ist einsatzbereit."
   },
   "el": {
     "ABOUT": "Σχετικά",
@@ -837,7 +853,11 @@
     "SHOW_TITLEBAR_OVERLAY": "Εμφάνιση εικονιδίου επικάλυψης στη γραμμή τίτλου των παραθύρων",
     "PRO_UPSELL_TITLE": "Απόκρυψη ακόμη πιο γρήγορα με το Pro",
     "PRO_UPSELL_CTA": "Το θέλω",
-    "PRO_UPSELL_DISMISS": "Απόρριψη"
+    "PRO_UPSELL_DISMISS": "Απόρριψη",
+    "TOAST_NO_TARGET": "Δεν έχει επιλεγεί ακόμη παράθυρο — επιλέξτε ένα από τη λίστα.",
+    "ONBOARDING_NEXT": "Επόμενο",
+    "ONBOARDING_PRESS_KEY": "Πατήστε {0} τώρα. Αυτό το παράθυρο πρέπει να είναι ενεργό.",
+    "ONBOARDING_READY": "Όλα έτοιμα! Το SnapAway είναι έτοιμο για χρήση."
   },
   "es": {
     "ABOUT": "Acerca de",
@@ -1005,7 +1025,11 @@
     "SHOW_TITLEBAR_OVERLAY": "Mostrar el icono superpuesto en las barras de título",
     "PRO_UPSELL_TITLE": "Oculta aún más rápido con Pro",
     "PRO_UPSELL_CTA": "Lo quiero",
-    "PRO_UPSELL_DISMISS": "Descartar"
+    "PRO_UPSELL_DISMISS": "Descartar",
+    "TOAST_NO_TARGET": "Todavía no hay ninguna ventana seleccionada: elige una en la lista.",
+    "ONBOARDING_NEXT": "Siguiente",
+    "ONBOARDING_PRESS_KEY": "Pulsa {0} ahora. Esta ventana debe estar activa.",
+    "ONBOARDING_READY": "¡Todo listo! SnapAway ya está listo para usarse."
   },
   "fr": {
     "ABOUT": "À propos",
@@ -1173,7 +1197,11 @@
     "SHOW_TITLEBAR_OVERLAY": "Afficher une icône superposée dans les barres de titre",
     "PRO_UPSELL_TITLE": "Masquez encore plus vite avec Pro",
     "PRO_UPSELL_CTA": "Je le veux",
-    "PRO_UPSELL_DISMISS": "Ignorer"
+    "PRO_UPSELL_DISMISS": "Ignorer",
+    "TOAST_NO_TARGET": "Aucune fenêtre sélectionnée pour l'instant — choisissez-en une dans la liste.",
+    "ONBOARDING_NEXT": "Suivant",
+    "ONBOARDING_PRESS_KEY": "Appuyez sur {0} maintenant. Cette fenêtre doit être active.",
+    "ONBOARDING_READY": "Tout est prêt ! SnapAway est prêt à l'emploi."
   },
   "hi": {
     "ABOUT": "के बारे में",
@@ -1341,7 +1369,11 @@
     "SHOW_TITLEBAR_OVERLAY": "विंडो टाइटलबार पर ओवरले आइकन दिखाएँ",
     "PRO_UPSELL_TITLE": "Pro के साथ और तेज़ी से छिपाएँ",
     "PRO_UPSELL_CTA": "मुझे यह चाहिए",
-    "PRO_UPSELL_DISMISS": "बंद करें"
+    "PRO_UPSELL_DISMISS": "बंद करें",
+    "TOAST_NO_TARGET": "अभी कोई विंडो चुनी नहीं गई — सूची में से एक चुनें।",
+    "ONBOARDING_NEXT": "आगे",
+    "ONBOARDING_PRESS_KEY": "अब {0} दबाएँ। यह विंडो सक्रिय होनी चाहिए।",
+    "ONBOARDING_READY": "सब तैयार! SnapAway इस्तेमाल के लिए तैयार है।"
   },
   "hu": {
     "ABOUT": "Névjegy",
@@ -1509,7 +1541,11 @@
     "SHOW_TITLEBAR_OVERLAY": "Átfedő ikon megjelenítése az ablak címsorában",
     "PRO_UPSELL_TITLE": "Rejtsen el még gyorsabban a Pro verzióval",
     "PRO_UPSELL_CTA": "Kérem",
-    "PRO_UPSELL_DISMISS": "Elvetés"
+    "PRO_UPSELL_DISMISS": "Elvetés",
+    "TOAST_NO_TARGET": "Még nincs kiválasztva ablak – válasszon egyet a listából.",
+    "ONBOARDING_NEXT": "Tovább",
+    "ONBOARDING_PRESS_KEY": "Nyomja meg most a(z) {0} billentyűt. Ennek az ablaknak aktívnak kell lennie.",
+    "ONBOARDING_READY": "Minden kész! A SnapAway használatra kész."
   },
   "it": {
     "ABOUT": "Informazioni",
@@ -1677,7 +1713,11 @@
     "SHOW_TITLEBAR_OVERLAY": "Mostra l'icona in sovrimpressione sulla barra del titolo",
     "PRO_UPSELL_TITLE": "Nascondi ancora più velocemente con Pro",
     "PRO_UPSELL_CTA": "Lo voglio",
-    "PRO_UPSELL_DISMISS": "Ignora"
+    "PRO_UPSELL_DISMISS": "Ignora",
+    "TOAST_NO_TARGET": "Nessuna finestra selezionata: scegline una nell'elenco.",
+    "ONBOARDING_NEXT": "Avanti",
+    "ONBOARDING_PRESS_KEY": "Premi {0} ora. Questa finestra deve essere attiva.",
+    "ONBOARDING_READY": "Tutto pronto! SnapAway è pronto all'uso."
   },
   "ja": {
     "ABOUT": "について",
@@ -1845,7 +1885,11 @@
     "SHOW_TITLEBAR_OVERLAY": "ウィンドウのタイトルバーにオーバーレイアイコンを表示",
     "PRO_UPSELL_TITLE": "Pro ならもっと速く隠せます",
     "PRO_UPSELL_CTA": "購入する",
-    "PRO_UPSELL_DISMISS": "閉じる"
+    "PRO_UPSELL_DISMISS": "閉じる",
+    "TOAST_NO_TARGET": "ウィンドウがまだ選択されていません。リストから選択してください。",
+    "ONBOARDING_NEXT": "次へ",
+    "ONBOARDING_PRESS_KEY": "今 {0} を押してください。このウィンドウが最前面にある必要があります。",
+    "ONBOARDING_READY": "準備完了！SnapAway を使用できます。"
   },
   "ko": {
     "ABOUT": "정보",
@@ -2013,7 +2057,11 @@
     "SHOW_TITLEBAR_OVERLAY": "창 제목 표시줄에 오버레이 아이콘 표시",
     "PRO_UPSELL_TITLE": "Pro로 더 빠르게 숨기기",
     "PRO_UPSELL_CTA": "구매하기",
-    "PRO_UPSELL_DISMISS": "닫기"
+    "PRO_UPSELL_DISMISS": "닫기",
+    "TOAST_NO_TARGET": "아직 창을 선택하지 않았습니다. 목록에서 선택하세요.",
+    "ONBOARDING_NEXT": "다음",
+    "ONBOARDING_PRESS_KEY": "지금 {0}을(를) 누르세요. 이 창이 활성 상태여야 합니다.",
+    "ONBOARDING_READY": "모두 준비되었습니다! SnapAway를 사용할 수 있습니다."
   },
   "nl": {
     "ABOUT": "Over",
@@ -2181,7 +2229,11 @@
     "SHOW_TITLEBAR_OVERLAY": "Overlay-pictogram op titelbalken tonen",
     "PRO_UPSELL_TITLE": "Nog sneller verbergen met Pro",
     "PRO_UPSELL_CTA": "Ik wil het",
-    "PRO_UPSELL_DISMISS": "Sluiten"
+    "PRO_UPSELL_DISMISS": "Sluiten",
+    "TOAST_NO_TARGET": "Nog geen venster geselecteerd — kies er een in de lijst.",
+    "ONBOARDING_NEXT": "Volgende",
+    "ONBOARDING_PRESS_KEY": "Druk nu op {0}. Dit venster moet de focus hebben.",
+    "ONBOARDING_READY": "Helemaal klaar! SnapAway is klaar voor gebruik."
   },
   "pl": {
     "ABOUT": "O programie",
@@ -2349,7 +2401,11 @@
     "SHOW_TITLEBAR_OVERLAY": "Pokazuj ikonę nakładki na pasku tytułu okien",
     "PRO_UPSELL_TITLE": "Ukrywaj jeszcze szybciej z Pro",
     "PRO_UPSELL_CTA": "Chcę to",
-    "PRO_UPSELL_DISMISS": "Odrzuć"
+    "PRO_UPSELL_DISMISS": "Odrzuć",
+    "TOAST_NO_TARGET": "Nie wybrano jeszcze okna — wybierz jedno z listy.",
+    "ONBOARDING_NEXT": "Dalej",
+    "ONBOARDING_PRESS_KEY": "Naciśnij teraz {0}. To okno musi być aktywne.",
+    "ONBOARDING_READY": "Gotowe! SnapAway jest gotowy do użycia."
   },
   "pt": {
     "ABOUT": "Sobre",
@@ -2517,7 +2573,11 @@
     "WELCOME_TO_SNAPAWAY": "Bem-vindo ao SnapAway",
     "PRO_FEATURE_SPECIFIC_MESSAGE": "{0} é um recurso premium. Ative o Lifetime Unlock para habilitá-lo.",
     "FLOATING_BUTTON_MODE_LEARNING": "Aprendizado",
-    "SHOW_TITLEBAR_OVERLAY": "Mostrar ícone de sobreposição nas barras de título"
+    "SHOW_TITLEBAR_OVERLAY": "Mostrar ícone de sobreposição nas barras de título",
+    "TOAST_NO_TARGET": "Nenhuma janela selecionada ainda — escolha uma na lista.",
+    "ONBOARDING_NEXT": "Avançar",
+    "ONBOARDING_PRESS_KEY": "Pressione {0} agora. Esta janela precisa estar em foco.",
+    "ONBOARDING_READY": "Tudo pronto! O SnapAway já pode ser usado."
   },
   "ru": {
     "ABOUT": "О программе",
@@ -2685,7 +2745,11 @@
     "SHOW_TITLEBAR_OVERLAY": "Показывать значок-наложение в заголовке окон",
     "PRO_UPSELL_TITLE": "Скрывайте ещё быстрее с Pro",
     "PRO_UPSELL_CTA": "Хочу",
-    "PRO_UPSELL_DISMISS": "Закрыть"
+    "PRO_UPSELL_DISMISS": "Закрыть",
+    "TOAST_NO_TARGET": "Окно ещё не выбрано — выберите его в списке.",
+    "ONBOARDING_NEXT": "Далее",
+    "ONBOARDING_PRESS_KEY": "Нажмите {0} сейчас. Это окно должно быть активным.",
+    "ONBOARDING_READY": "Всё готово! SnapAway можно использовать."
   },
   "sv": {
     "ABOUT": "Om",
@@ -2853,7 +2917,11 @@
     "SHOW_TITLEBAR_OVERLAY": "Visa överlagringssymbol i fönstrets titelfält",
     "PRO_UPSELL_TITLE": "Dölj ännu snabbare med Pro",
     "PRO_UPSELL_CTA": "Jag vill ha det",
-    "PRO_UPSELL_DISMISS": "Stäng"
+    "PRO_UPSELL_DISMISS": "Stäng",
+    "TOAST_NO_TARGET": "Inget fönster valt ännu — välj ett i listan.",
+    "ONBOARDING_NEXT": "Nästa",
+    "ONBOARDING_PRESS_KEY": "Tryck på {0} nu. Det här fönstret måste vara aktivt.",
+    "ONBOARDING_READY": "Allt klart! SnapAway är redo att användas."
   },
   "th": {
     "ABOUT": "เกี่ยวกับ",
@@ -3021,7 +3089,11 @@
     "SHOW_TITLEBAR_OVERLAY": "แสดงไอคอนซ้อนบนแถบชื่อหน้าต่าง",
     "PRO_UPSELL_TITLE": "ซ่อนได้เร็วขึ้นด้วย Pro",
     "PRO_UPSELL_CTA": "ต้องการสิ่งนี้",
-    "PRO_UPSELL_DISMISS": "ปิด"
+    "PRO_UPSELL_DISMISS": "ปิด",
+    "TOAST_NO_TARGET": "ยังไม่ได้เลือกหน้าต่าง — เลือกหนึ่งรายการจากลิสต์",
+    "ONBOARDING_NEXT": "ถัดไป",
+    "ONBOARDING_PRESS_KEY": "กด {0} ตอนนี้ หน้าต่างนี้ต้องอยู่ในโฟกัส",
+    "ONBOARDING_READY": "พร้อมใช้งานแล้ว! SnapAway พร้อมใช้งาน"
   },
   "tr": {
     "ABOUT": "Hakkında",
@@ -3189,7 +3261,11 @@
     "SHOW_TITLEBAR_OVERLAY": "Pencere başlık çubuğunda yer paylaşımı simgesini göster",
     "PRO_UPSELL_TITLE": "Pro ile daha da hızlı gizleyin",
     "PRO_UPSELL_CTA": "İstiyorum",
-    "PRO_UPSELL_DISMISS": "Kapat"
+    "PRO_UPSELL_DISMISS": "Kapat",
+    "TOAST_NO_TARGET": "Henüz pencere seçilmedi — listeden birini seçin.",
+    "ONBOARDING_NEXT": "İleri",
+    "ONBOARDING_PRESS_KEY": "Şimdi {0} tuşuna basın. Bu pencerenin etkin olması gerekir.",
+    "ONBOARDING_READY": "Her şey hazır! SnapAway kullanıma hazır."
   },
   "zh": {
     "ABOUT": "关于",
@@ -3357,6 +3433,10 @@
     "SHOW_TITLEBAR_OVERLAY": "在窗口标题栏显示叠加图标",
     "PRO_UPSELL_TITLE": "使用 Pro 隐藏得更快",
     "PRO_UPSELL_CTA": "我想要",
-    "PRO_UPSELL_DISMISS": "忽略"
+    "PRO_UPSELL_DISMISS": "忽略",
+    "TOAST_NO_TARGET": "尚未选择窗口——请在列表中选择一个。",
+    "ONBOARDING_NEXT": "下一步",
+    "ONBOARDING_PRESS_KEY": "现在按 {0}。此窗口需要处于活动状态。",
+    "ONBOARDING_READY": "一切就绪！SnapAway 可以使用了。"
   }
 }
