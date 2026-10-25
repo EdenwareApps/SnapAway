@@ -131,6 +131,9 @@ dist
 .pnp.*
 scripts/signtool.ps1
 
+# Credenciais locais do sentry-cli (NUNCA commitar; ver .sentryclirc.example)
+.sentryclirc
+
 # Local private modules and release material (kept outside OSS)
 /private/
 private/
@@ -176,3 +179,15 @@ src/iap/sdk-runtime/
 # Python bytecode cache
 __pycache__/
 *.pyc
+
+# build/ é saída (logos APPX gerados por prepare:appx-assets), mas build/appx/extensions.xml
+# é fonte: declara a StartupTask do pacote e precisa ser versionado.
+!build/
+build/*
+!build/appx/
+build/appx/*
+!build/appx/extensions.xml
+
+# Saídas do node-gyp/CMake dos addons nativos (rebuild:native). Os binários usados em
+# runtime são gerados localmente e copiados para dist/ via copy:natives.
+src/*/build/

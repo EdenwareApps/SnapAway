@@ -19,6 +19,13 @@ Todos os componentes foram revisados e testados. **Todos os 7 testes de verifica
 **Validação**: Manifest valida corretamente com MakeAppx
 
 ### 2. build-appx.js
+
+> Nota 1.2.1: este script foi removido. O pacote é gerado por `electron-builder --win appx`
+> (`npm run appx`, e `npm run dist:appx` para assinar), a partir do template do
+> electron-builder mais a tarefa de inicialização declarada em `build/appx/extensions.xml`.
+> O `AppxManifest.xml` da raiz é apenas uma cópia de referência. O histórico abaixo fica
+> como registro do que foi revisado naquela versão.
+
 **Status**: âœ… REVISADO E MELHORADO
 
 **AlteraÃ§Ãµes realizadas**:
@@ -46,7 +53,7 @@ Todos os componentes foram revisados e testados. **Todos os 7 testes de verifica
 **Status**: âœ… TODOS FUNCIONANDO
 
 Scripts criados e testados:
-- âœ… `scripts/build-appx.js` - Build e sign APPX
+- âœ… `npm run dist:appx` - Build e sign APPX
 - âœ… `scripts/validate-store-compliance.js` - Validação de compliance
 - âœ… `scripts/prepare-submission.js` - Preparação para submissão
 - âœ… `scripts/post-submission-guide.js` - Guia pÃ³s-submissão
@@ -110,7 +117,7 @@ Todos os 7 testes passaram:
 - `dist/iap_addon.node` - IAP implementation
 
 ### Scripts
-- `scripts/build-appx.js` - Build APPX (com assinatura)
+- `npm run appx` - Build APPX (assinatura: `npm run dist:appx`)
 - `scripts/validate-store-compliance.js` - Validação
 - `scripts/verify-submission.js` - Testes de verificação
 - `scripts/prepare-submission.js` - Preparação
@@ -131,7 +138,7 @@ Todos os 7 testes passaram:
 
 2. **Certificado de Assinatura**: 
    - APPX atual não é assinado
-   - Use: `node scripts/build-appx.js --sign --cert cert.pfx` se tiver certificado
+   - Use: `npm run dist:appx` se tiver certificado
    - Microsoft pode autogenerar certificado no Partner Center
 
 3. **IAP Product**: 

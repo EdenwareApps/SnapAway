@@ -1,7 +1,9 @@
 ﻿<script>
 import { createEventDispatcher, onMount } from 'svelte';
 
-  let startupTaskState = null; // WinRT state for MSIX installs
+  let startupTaskState = null; // estado reportado pelo Windows, quando existe
+  let startupBlocked = false; // o Windows não deixa o app iniciar com o sistema
+  let startupAvailable = true; // false: esta instalação não consegue registrar startup
   let isStoreInstallLocal = false;
   let startupErrorMessage = ''; // Mensagem de erro amigável
   onMount(async () => {
@@ -9,9 +11,12 @@ import { createEventDispatcher, onMount } from 'svelte';
       try {
         const s = await window.api.getStartupState();
         isStoreInstallLocal = !!s.isStoreInstall;
-        if (s.isStoreInstall) {
-          startupTaskState = s.state || null;
-          // Sync config.startup with the real WinRT state
+        startupAvailable = s.available !== false;
+        startupBlocked = !!s.blocked;
+        startupTaskState = s.state || null;
+        // O estado real vence o valor guardado: a opção pode ter sido desligada fora
+        // do app (Gerenciador de Tarefas, Configurações) desde a última sessão.
+        if (startupAvailable && typeof s.isEnabled === 'boolean') {
           config.startup = s.isEnabled;
         }
       } catch (_) {}
@@ -27,6 +32,12 @@ import { createEventDispatcher, onMount } from 'svelte';
 
   let activeInput = null;
   $: canDeactivatePro = isPro && proSource === 'license-key';
+  $: startupBlockedNotice = startupTaskState === 'DisabledByPolicy'
+    ? (lang.STARTUP_DISABLED_BY_POLICY || 'Blocked by system policy.')
+    : (lang.STARTUP_DISABLED_BY_USER || 'Disabled in Windows settings.');
+  // Mute can only be toggled while windows are shown: disabling it while they are
+  // hidden would leave their audio muted, since unmute is skipped when muteWindows is off.
+  $: muteLockedHint = visible ? undefined : (lang.MUTE_WINDOWS_LOCKED || 'Show the hidden windows first to change this option.');
   let languages = [];
   const modifiers = new Set(['Ctrl', 'Alt', 'Shift', 'Meta']);
   const pressedKeys = new Set();
@@ -582,7 +593,7 @@ import { createEventDispatcher, onMount } from 'svelte';
       name="startup"
       type="checkbox"
       checked={config.startup}
-      disabled={startupTaskState === 'DisabledByUser' || startupTaskState === 'DisabledByPolicy'}
+      disabled={startupBlocked || !startupAvailable}
       on:change={async (e) => {
         if (!window.api || !window.api.setStartup) {
           dispatch('change');
@@ -591,28 +602,30 @@ import { createEventDispatcher, onMount } from 'svelte';
         startupErrorMessage = '';
         const checked = e.target.checked;
         const result = await window.api.setStartup(checked);
-        if (result && result.success) {
-          config.startup = result.startupTaskState
-            ? (result.startupTaskState === 'Enabled' || result.startupTaskState === 'EnabledByPolicy')
-            : checked;
-          if (result.startupTaskState) {
-            startupTaskState = result.startupTaskState;
-          }
+        // Quem manda é o estado que o Windows devolve, não o que foi pedido: o pedido
+        // pode ser recusado (tarefa desativada pelo usuário, política do sistema).
+        const reported = result && typeof result.isEnabled === 'boolean' ? result.isEnabled : checked;
+        if (result && result.success && reported === checked) {
+          config.startup = checked;
+          if (typeof result.startupTaskState === 'string') startupTaskState = result.startupTaskState;
+          startupBlocked = !!result.blocked;
           dispatch('change');
-        } else {
-          // Reverte o checkbox se falhou
-          config.startup = !checked;
-          startupErrorMessage = result?.message
-            ? result.message
-            : (lang.STARTUP_SETUP_FAILED || 'Could not enable startup automatically.');
+          return;
         }
+        e.target.checked = reported;
+        config.startup = reported;
+        startupBlocked = !!(result && result.blocked);
+        if (result && typeof result.startupTaskState === 'string') startupTaskState = result.startupTaskState;
+        startupErrorMessage = (result && result.message)
+          ? result.message
+          : (lang.STARTUP_SETUP_FAILED || 'Could not enable startup automatically.');
       }}
       />
     </div>
-    {#if startupTaskState === 'DisabledByUser'}
+    {#if startupBlocked}
     <div class="shortcut-container startup-disabled-notice">
       <span style="font-size:0.85em; opacity:0.75;">
-        {lang.STARTUP_DISABLED_BY_USER || 'Disabled in Windows settings.'}&nbsp;
+        {startupBlockedNotice}&nbsp;
         <button class="link-button" on:click={() => window.api && window.api.launchUrl && window.api.launchUrl('ms-settings:startupapps')}>
           {lang.OPEN_STARTUP_SETTINGS || 'Open Startup Settings'}
         </button>
@@ -705,14 +718,15 @@ import { createEventDispatcher, onMount } from 'svelte';
         <span class="pro-indicator" on:click={() => showProModalFeature('runHighPriority', lang.RUN_HIGH_PRIORITY || 'Run high priority')} on:keydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); showProModalFeature('runHighPriority', lang.RUN_HIGH_PRIORITY || 'Run high priority'); } }} role="button" tabindex="0" title={lang.PRO_FEATURE}><i class="fas fa-star" aria-hidden="true"></i>&nbsp;{lang.PRO_FEATURE}</span>
       {/if}
     </div>
-    <div class="shortcut-container">
-      <label for="mute-windows">{lang.MUTE_WINDOWS}:</label>
+    <div class="shortcut-container" title={muteLockedHint}>
+      <label for="mute-windows" title={muteLockedHint}>{lang.MUTE_WINDOWS}:</label>
       <input
       id="mute-windows" 
       name="mute-windows" 
       type="checkbox" 
       checked={config.muteWindows} 
       disabled={!visible}
+      title={muteLockedHint}
       on:change={(e) => {
         if (!isPro) {
           e.target.checked = !e.target.checked; // reverte o toggle visual

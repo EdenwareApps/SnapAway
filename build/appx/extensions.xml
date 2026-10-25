@@ -1,0 +1,31 @@
+<!--
+  The startup task the packaged build needs, and the only way an app with package
+  identity can start with Windows.
+
+  Windows ignores the per-user Run key for a packaged app: what launches at sign-in is
+  a task the manifest declares, and the person can then switch it on or off in
+  Settings, Apps, Startup (or Task Manager, Startup apps). Without this declaration the
+  checkbox in the settings window has nothing to write to and silently does nothing.
+
+  electron-builder appends this file inside the application's Extensions element
+  (appx.customExtensionsPath), so it must not carry a root element of its own, and the
+  values below are literal rather than macros: the substitution pass runs over the
+  manifest template before this file is inserted. Executable has to match the
+  Application element electron-builder writes, which is app, backslash, product name.
+
+  Enabled="false" is deliberate: "start with Windows" is off by default in this app,
+  and the settings window is what turns it on (src/main/index.js, which reaches this
+  task through WinRT). TaskId appears there too, and the two have to agree: it is the
+  only handle Windows gives the app on the task, and a mismatch looks exactly like a
+  build that never declared it.
+
+  No Arguments attribute: the schema gives a startup task TaskId, Enabled, DisplayName
+  and ImmediateRegistration, nothing else, and makeappx refuses the package if one is
+  added. So a launch through this task cannot be told apart from a manual one at start,
+  unlike the login item the unpackaged build writes, which appends the autostart marker
+  argument the main process looks for. XML comments cannot contain a double hyphen
+  either, which is why that argument is named rather than spelled out here.
+-->
+<desktop:Extension Category="windows.startupTask" Executable="app\SnapAway.exe" EntryPoint="Windows.FullTrustApplication">
+  <desktop:StartupTask TaskId="SnapAway" Enabled="false" DisplayName="SnapAway" />
+</desktop:Extension>

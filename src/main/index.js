@@ -111,6 +111,11 @@ const os = require('os');
 const { execFile, spawn } = require('child_process');
 const superagent = require('superagent');
 
+// Estado do addon nativo de StartupTask (WinRT). Declarado aqui, antes do primeiro
+// uso em getStoreInstallContext(), para não cair na zona morta do `let`.
+let startupTaskAddon;
+let startupTaskAddonResolved = false;
+
 if (process.platform === 'win32') {
     const nativeModulePath = __dirname;
     if (!process.env.PATH || !process.env.PATH.split(path.delimiter).includes(nativeModulePath)) {
@@ -121,6 +126,12 @@ if (process.platform === 'win32') {
 console.log('[MAIN] before require system');
 const system = require('../system/system.js');
 console.log('[MAIN] after require system');
+const {
+    createTransitionTrace,
+    markTransitionStep,
+    markTransitionWindow,
+    logTransitionTrace
+} = require('../shared/window-transition-trace');
 console.log('[MAIN] before require xsystem');
 const xsystem = require('../x-system/win32-support.js');
 console.log('[MAIN] after require xsystem');
@@ -154,6 +165,41 @@ process.on('unhandledRejection', (reason) => {
   }
 });
 
+// A identidade de pacote MSIX é atribuída por processo e NÃO é herdada por
+// processos filhos, então um powershell.exe lançado com execFile nunca enxerga a
+// StartupTask (0x80070490) por mais que o manifesto a declare. A chamada WinRT
+// precisa acontecer dentro deste processo, no addon nativo. O powershell abaixo
+// ficou apenas como último recurso caso o addon não carregue.
+function loadStartupTaskAddon() {
+    if (startupTaskAddonResolved) return startupTaskAddon;
+    startupTaskAddonResolved = true;
+
+    const candidates = [
+        path.join(__dirname, 'startup_addon.node'),
+        path.join(process.cwd(), 'out', 'main', 'startup_addon.node'),
+        path.join(process.cwd(), 'src', 'startup', 'build', 'Release', 'startup_addon.node'),
+        path.join(process.cwd(), 'dist', 'startup_addon.node')
+    ];
+
+    for (const candidate of candidates) {
+        try {
+            if (!fs.existsSync(candidate)) continue;
+            // process.dlopen resolve o caminho dentro do app.asar para o
+            // app.asar.unpacked, onde os .node são publicados.
+            const loaded = { exports: {} };
+            process.dlopen(loaded, candidate);
+            startupTaskAddon = loaded.exports;
+            console.log('[MAIN] StartupTask addon loaded from:', candidate);
+            return startupTaskAddon;
+        } catch (error) {
+            console.warn('[MAIN] StartupTask addon failed to load from', candidate, ':', error && error.message);
+        }
+    }
+
+    console.warn('[MAIN] StartupTask addon unavailable; WinRT calls will fall back to powershell');
+    return null;
+}
+
 function getStoreInstallContext() {
     const packageFamilyName = process.env.APPX_PACKAGE_FAMILY_NAME
         || process.env.PACKAGE_FAMILY_NAME
@@ -168,25 +214,73 @@ function getStoreInstallContext() {
     const isWindowsAppsPath = execPath.includes('\\WindowsApps\\') ||
         resourcesPath.includes('\\WindowsApps\\');
 
-    const isStoreInstall = windowsStore || isWindowsAppsPath;
+    // A fonte mais confiável é o próprio Windows: se o processo tem identidade de
+    // pacote, a StartupTask é o único caminho de inicialização que funciona (a
+    // chave Run é virtualizada para dentro do pacote).
+    let processPackageFamilyName = '';
+    try {
+        const addon = loadStartupTaskAddon();
+        if (addon && typeof addon.packageFamilyName === 'function') {
+            processPackageFamilyName = addon.packageFamilyName() || '';
+        }
+    } catch (error) {
+        console.warn('[MAIN] Could not query package identity:', error && error.message);
+    }
+
+    const effectiveFamilyName = packageFamilyName || processPackageFamilyName || '';
+    const hasPackageIdentity = Boolean(effectiveFamilyName);
+    const isStoreInstall = windowsStore || isWindowsAppsPath || hasPackageIdentity;
 
     return {
         isStoreInstall,
         windowsStore,
         isWindowsAppsPath,
-        hasPackageIdentity: Boolean(packageFamilyName),
-        packageFamilyName: packageFamilyName || null
+        hasPackageIdentity,
+        packageFamilyName: effectiveFamilyName || null
     };
 }
 
+const STARTUP_TASK_ID = 'SnapAway';
+
+// Os estados que Windows.ApplicationModel.StartupTaskState sabe reportar. Qualquer
+// outra coisa que chegue aqui — "NotFound" para um pacote que não declara a tarefa,
+// "Error: ..." para uma falha da WinRT, "Error: timeout" — é falha, nunca estado.
+const STARTUP_TASK_STATES = new Set([
+    'Enabled', 'EnabledByPolicy', 'Disabled', 'DisabledByUser', 'DisabledByPolicy'
+]);
+
 async function runWinRTStartupTask(action) {
-    const taskId = 'SnapAway';
+    const addon = loadStartupTaskAddon();
+    if (addon && typeof addon.startupTask === 'function') {
+        try {
+            const result = await addon.startupTask(action, STARTUP_TASK_ID);
+            if (result && result.ok && result.state) {
+                return result.state;
+            }
+            if (result && result.code === 'not-found') {
+                return 'NotFound';
+            }
+            console.warn('[MAIN] WinRT StartupTask addon (' + action + ') failed:', JSON.stringify(result));
+            return null;
+        } catch (error) {
+            console.warn('[MAIN] WinRT StartupTask addon (' + action + ') threw:', error && error.message);
+            return null;
+        }
+    }
+
+    // Fallback raro (addon ausente). Numa instalação MSIX este caminho não funciona
+    // porque o powershell não herda a identidade do pacote: 0x80070490 aqui significa
+    // "sem identidade", não "pacote sem a StartupTask".
     const header = [
+        '$ErrorActionPreference = "Stop"',
         'Add-Type -AssemblyName System.Runtime.WindowsRuntime',
         '[Windows.ApplicationModel.StartupTask,Windows.ApplicationModel,ContentType=WindowsRuntime] | Out-Null',
-        "$op = [Windows.ApplicationModel.StartupTask]::GetAsync('" + taskId + "')",
-        '$gt = [System.WindowsRuntimeSystemExtensions]::AsTask($op)',
-        '$gt.Wait()',
+        // AsTask(op) não resolve sobrecarga no PowerShell 5.1; escolhemos o método por reflexão.
+        '$awaitOp = { param($op) $m = ([System.WindowsRuntimeSystemExtensions].GetMethods() | Where-Object { $_.Name -eq "AsTask" -and $_.GetParameters().Count -eq 1 -and $_.GetParameters()[0].ParameterType.Name -like "IAsyncOperation*" })[0]; $t = $m.MakeGenericMethod($op.GetType().GenericTypeArguments[0]).Invoke($null, @($op)); $null = $t.Wait(8000); $t }',
+        "$op = [Windows.ApplicationModel.StartupTask]::GetAsync('" + STARTUP_TASK_ID + "')",
+        '$gt = & $awaitOp $op',
+        'try { $null = $gt.Wait(8000) } catch { Write-Output ("Error: " + $_.Exception.Message); exit 1 }',
+        'if ($gt.Status -ne [System.Threading.Tasks.TaskStatus]::RanToCompletion) { Write-Output "Error: timeout"; exit 1 }',
         '$t = $gt.Result'
     ].join('; ');
     let body;
@@ -206,8 +300,7 @@ async function runWinRTStartupTask(action) {
             '  for ($i = 0; $i -lt 3; $i++) {',
             '    try {',
             '      $eop = $t.RequestEnableAsync()',
-            '      $et = [System.WindowsRuntimeSystemExtensions]::AsTask($eop)',
-            '      $null = $et.Wait(3000)',
+            '      $et = & $awaitOp $eop',
             '      if ($et.Status -eq [System.Threading.Tasks.TaskStatus]::RanToCompletion) {',
             '        $st = $et.Result',
             '        Write-Output $st.ToString()',
@@ -228,11 +321,21 @@ async function runWinRTStartupTask(action) {
     } else if (action === 'disable') {
         body = [
             'if ($null -eq $t) { Write-Output "NotFound"; exit 0 }',
-            'try { $t.Disable() } catch { }',
+            '$err = $null',
+            'try { $t.Disable() } catch { $err = $_.Exception.Message }',
+            'if ($err) { Write-Output ("Error: " + $err); exit 1 }',
             'Write-Output $t.State.ToString()'
         ].join('; ');
     } else { return null; }
-    const script = header + '; ' + body;
+    // Depois de mudar o estado, relê a tarefa: o que vale é o que o Windows responde,
+    // não o que foi pedido. A releitura é a última linha do stdout, como antes.
+    const readBack = [
+        'try {',
+        '  $g2 = & $awaitOp ([Windows.ApplicationModel.StartupTask]::GetAsync(' + "'" + STARTUP_TASK_ID + "'" + '))',
+        '  if ($g2.Status -eq [System.Threading.Tasks.TaskStatus]::RanToCompletion -and $null -ne $g2.Result) { Write-Output $g2.Result.State.ToString() } else { Write-Output $t.State.ToString() }',
+        '} catch { Write-Output $t.State.ToString() }'
+    ].join('; ');
+    const script = header + '; ' + body + (action === 'get' ? '' : '; ' + readBack);
     return new Promise((resolve) => {
         execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], { timeout: 20000, maxBuffer: 1024 * 1024 }, (err, stdout, stderr) => {
             if (err) {
@@ -252,26 +355,40 @@ async function runWinRTStartupTask(action) {
     });
 }
 
+// Keeps config.startup and what Windows actually does in agreement. The OS is the
+// authority in both installs: the user can change startup outside this app (Startup
+// apps, Task Manager), so the stored value follows the real one rather than the other
+// way round.
 async function syncStartupPreferenceOnBoot() {
     try {
         const storeCtx = getStoreInstallContext();
         if (storeCtx.isStoreInstall) {
-            // Store/MSIX startup is user-controlled via StartupTask permissions.
+            // The startup task has four "off"/"on" outcomes and the user can move
+            // between them at any time; only Enabled* means it really starts. Nothing
+            // is written back here: re-enabling a task the user turned off would
+            // ignore their choice, and the checkbox is what does the writing.
+            const taskState = await runWinRTStartupTask('get');
+            if (!STARTUP_TASK_STATES.has(taskState)) {
+                console.warn('[MAIN] Boot sync: startup task state unavailable:', taskState);
+                return;
+            }
+            const enabledInWindows = taskState === 'Enabled' || taskState === 'EnabledByPolicy';
+            if (!!config.startup !== enabledInWindows) {
+                config.startup = enabledInWindows;
+                console.log('[MAIN] Boot sync: startup followed Windows into', taskState);
+            }
             return;
         }
 
-        const shouldEnable = !!config.startup;
-        try {
-            const enabled = isLoginItemEnabled();
-            if (shouldEnable && !enabled) {
-                setLoginItemEnabled(true);
-                console.log('[MAIN] Boot sync: enabled startup for EXE install');
-            } else if (!shouldEnable && enabled) {
-                setLoginItemEnabled(false);
-                console.log('[MAIN] Boot sync: disabled startup for EXE install');
-            }
-        } catch (e) {
-            console.warn('[MAIN] Boot sync startup failed:', e.message);
+        // EXE install: Windows is the authority here too. The Run entry can disappear
+        // (installer leftovers, a cleaner) or be disabled in Task Manager, and writing it
+        // back would ignore a choice the user made outside this app. The checkbox is what
+        // writes; this only mirrors.
+        const registration = readLoginItem();
+        const enabledInWindows = registration.registered && registration.enabled;
+        if (!!config.startup !== enabledInWindows) {
+            config.startup = enabledInWindows;
+            console.log('[MAIN] Boot sync: startup followed Windows into', enabledInWindows);
         }
     } catch (error) {
         console.warn('[MAIN] Boot sync for startup preference failed:', error && error.message ? error.message : error);
@@ -609,8 +726,8 @@ async function runElevatedActionOneShot(action, params = {}) {
 // Oculta em lote janelas de processos elevados usando o helper elevado. Pergunta
 // ao usuário uma única vez por lote (o prompt de UAC é o mecanismo real de
 // confirmação da elevação) e faz o bookkeeping de cada janela oculta (fix 1.1.2).
-async function handleElevatedBatchHide(hwnds) {
-    if (!Array.isArray(hwnds) || hwnds.length === 0) return;
+async function handleElevatedBatchHide(hwnds, trace = null) {
+    if (!Array.isArray(hwnds) || hwnds.length === 0) return { succeeded: [], failed: [] };
     try {
         // Vai DIRETO ao UAC — o próprio prompt de elevação é a confirmação.
         // Sem diálogo de confirmação do app (fix 1.1.2).
@@ -634,15 +751,26 @@ async function handleElevatedBatchHide(hwnds) {
         if (failed.size > 0) {
             console.warn('[MAIN] Elevated batch hide failed for', failed.size, 'window(s):', Array.from(failed).join(','));
         }
+        for (const hwndStr of succeeded) {
+            markTransitionWindow(trace, hwndStr, '', 'elevated-hidden');
+        }
+        for (const hwndStr of hwnds) {
+            const dec = String(hwndToDecimalString(hwndStr));
+            if (failed.has(dec) || failed.has(String(hwndStr))) {
+                markTransitionWindow(trace, hwndStr, '', 'elevated-failed');
+            }
+        }
+        return { succeeded, failed: Array.from(failed) };
     } catch (error) {
         console.error('[MAIN] Error during elevated batch hide:', error);
+        return { succeeded: [], failed: [] };
     }
 }
 
 // Restaura em lote janelas de processos elevados via helper elevado e finaliza
 // o bookkeeping (remove do tracking e desmuta) com showSpecificWindow (fix 1.1.2).
-async function handleElevatedBatchShow(hwnds) {
-    if (!Array.isArray(hwnds) || hwnds.length === 0) return;
+async function handleElevatedBatchShow(hwnds, trace = null) {
+    if (!Array.isArray(hwnds) || hwnds.length === 0) return { succeeded: [], failed: [] };
     try {
         const decimalHwnds = hwnds.map(h => hwndToDecimalString(h)).join(',');
         const elevatedResult = await runElevatedAction('show-window', { hwnds: decimalHwnds });
@@ -664,8 +792,19 @@ async function handleElevatedBatchShow(hwnds) {
         if (failed.size > 0) {
             console.warn('[MAIN] Elevated batch show failed for', failed.size, 'window(s):', Array.from(failed).join(','));
         }
+        for (const hwndStr of succeeded) {
+            markTransitionWindow(trace, hwndStr, '', 'elevated-shown');
+        }
+        for (const hwndStr of hwnds) {
+            const dec = String(hwndToDecimalString(hwndStr));
+            if (failed.has(dec) || failed.has(String(hwndStr))) {
+                markTransitionWindow(trace, hwndStr, '', 'elevated-show-failed');
+            }
+        }
+        return { succeeded, failed: Array.from(failed) };
     } catch (error) {
         console.error('[MAIN] Error during elevated batch show:', error);
+        return { succeeded: [], failed: [] };
     }
 }
 
@@ -685,21 +824,24 @@ function getFloatingButtonMode() {
     return normalizeFloatingButtonMode(config.showEmergencyButton);
 }
 
+// Names that have to agree in three places: the Run value (named after the AUMID, so
+// Electron's own getLoginItemSettings can read back what we wrote), the Application
+// User Model ID the packaged build reports, and the startup task declared in
+// build/appx/extensions.xml.
+const APP_USER_MODEL_ID = 'Edenware.app.Snapcover';
+const AUTOSTART_ARG = '--autostart';
+const AUTOSTART_ARGS = [AUTOSTART_ARG];
+
 async function setStartupWithElevation(enable) {
-    return await runElevatedAction('set-autostart', {
-        enable: enable ? 'true' : 'false',
-        exePath: process.execPath,
-        args: '--autostart',
-        name: 'SnapAway'
-    });
+    return await runElevatedAction('set-autostart', getAutostartArgs(enable));
 }
 
 function getAutostartArgs(enable) {
     return {
         enable: enable ? 'true' : 'false',
         exePath: process.execPath,
-        args: '--autostart',
-        name: 'SnapAway'
+        args: AUTOSTART_ARG,
+        name: APP_USER_MODEL_ID
     };
 }
 
@@ -774,6 +916,7 @@ const iconProcessor = require('../cloak/icon-processor.js');
 const iapModule = require('../iap/index.js');
 const retention = require('./retention');
 const reviewPrompt = require('./review-prompt');
+const proUpsell = require('./pro-upsell');
 const premiumProvider = require('./premium/provider');
 const lang = require('../language/language.js');
 let lastKnownStorePro = false;
@@ -787,10 +930,51 @@ if (telemetry && typeof telemetry.setPartnerCenterCustomEventLogger === 'functio
         ? iapModule.logCustomEvent.bind(iapModule)
         : null;
     if (logCustomEvent) {
+        // O veredito do nativo ({ logged, available, error, hresult }) era
+        // descartado: se o Store Services SDK falhasse no pacote (ex.:
+        // REGDB_E_CLASSNOTREG), os eventos sumiam sem deixar rastro e o funil
+        // aparecia vazio no Partner Center. Registramos o primeiro resultado de
+        // cada execução e toda mudança de estado no log persistente — sem isso
+        // não há como distinguir "SDK quebrado" de "agregação atrasada".
+        let storeEventAttempts = 0;
+        let lastStoreEventSignature = null;
+
+        const recordStoreEventResult = (eventName, result) => {
+            storeEventAttempts += 1;
+            const logged = !!(result && result.logged === true);
+            const error = result && result.error ? String(result.error) : '';
+            const hresult = result && result.hresult ? String(result.hresult) : null;
+            const signature = logged ? 'ok' : `${error}#${hresult || ''}`;
+            if (signature === lastStoreEventSignature) {
+                return;
+            }
+            lastStoreEventSignature = signature;
+            telemetry.logLocalEvent('store.custom_event.diagnostic', {
+                sampleEvent: eventName,
+                logged,
+                available: !!(result && result.available === true),
+                error: error || null,
+                hresult,
+                attempts: storeEventAttempts
+            });
+        };
+
         telemetry.setPartnerCenterCustomEventLogger((eventName) => {
+            const onFailure = (error) => {
+                recordStoreEventResult(eventName, {
+                    logged: false,
+                    available: false,
+                    error: error && error.message ? error.message : String(error)
+                });
+            };
             try {
-                Promise.resolve(logCustomEvent(eventName)).catch(() => {});
-            } catch (_) { /* ignore */ }
+                Promise.resolve(logCustomEvent(eventName)).then(
+                    (result) => recordStoreEventResult(eventName, result),
+                    onFailure
+                );
+            } catch (error) {
+                onFailure(error);
+            }
         });
         console.log('[MAIN] Partner Center custom event logger enabled (Store Services SDK).');
     } else {
@@ -1072,6 +1256,13 @@ let lastNormalWindowBounds = null; // Guarda o tamanho/posição antes da maximi
 let authWindowSize = null; // Tamanho da janela antes da autenticação
 let authWindowPosition = null; // Posição da janela antes da autenticação
 let titlebarOverlayManager = null
+// Garante que o flush do Sentry no encerramento rode uma única vez.
+let telemetryFlushed = false;
+// true quando o Windows está encerrando a sessão (desligar/reiniciar/logoff).
+// Nesse caso NÃO podemos atrasar nem bloquear o encerramento — o Windows dá um
+// orçamento curto de quiesce e mata o app que não responder (WER bucket
+// MOAPPLICATION_HANG_*_HANG_QUIESCE).
+let sessionEnding = false;
 
 // Helper para atualizar tamanho/posição principais com validações básicas
 function setMainWindowBounds(size = {}, position = {}, { applyToWindow = true, save = true } = {}) {
@@ -1331,17 +1522,52 @@ initTitlebarSupport();
 
 // Login item management via Electron's built-in API
 // No auto-launch package needed - HKCU registry does not require elevation
+// Electron names the Run value after the AUMID when no name is given, and its read
+// side ignores a `name` option altogether: getLoginItemSettings always reads the AUMID
+// entry and compares it against path + args. Building both from one place keeps a
+// single entry instead of one the app writes and another it cannot see.
+function autostartRegistration() {
+    // O caminho vai entre aspas porque é assim que o valor precisa ficar no registro para
+    // ser executável quando o caminho tem espaços, e porque a leitura do Electron compara
+    // a string gravada com a que ela monta a partir de path + args: sem as aspas, o valor
+    // gravado pelo helper (sempre com aspas) nunca casaria com o que a API procura.
+    return {
+        path: `"${process.execPath}"`,
+        args: AUTOSTART_ARGS,
+        name: APP_USER_MODEL_ID
+    };
+}
+
 function setLoginItemEnabled(enable) {
+    const registration = autostartRegistration();
     app.setLoginItemSettings({
-        openAtLogin: enable,
-        path: process.execPath,
-        args: ['--autostart']
+        openAtLogin: !!enable,
+        path: registration.path,
+        args: registration.args,
+        name: registration.name
     });
 }
 
-function isLoginItemEnabled() {
-    const settings = app.getLoginItemSettings();
-    return settings.openAtLogin;
+function readLoginItem() {
+    const registration = autostartRegistration();
+    // openAtLogin compara a string do registro com a que o Electron monta de path + args,
+    // então só reconhece o valor com o nome do AUMID. launchItems é a lista do Run já
+    // interpretada: traz qualquer valor cujo executável seja este (inclusive o de uma
+    // instalação anterior, com outro nome) e o estado do StartupApproved em `enabled`, que
+    // é quem diz se o Windows vai mesmo executar. Os dois juntos cobrem o caso de o valor
+    // estar registrado sem que a comparação de string bata.
+    const settings = app.getLoginItemSettings({
+        path: registration.path,
+        args: registration.args
+    });
+    const items = Array.isArray(settings.launchItems) ? settings.launchItems : [];
+    const registered = !!settings.openAtLogin || items.length > 0;
+    const enabled = registered && settings.executableWillLaunchAtLogin !== false;
+    return {
+        registered,
+        enabled,
+        blocked: registered && !enabled
+    };
 }
 
 async function runHelperAction(action, params = {}) {
@@ -2238,8 +2464,10 @@ function createWindow() {
     });
 
     window.on('close', (event) => {
-        appendIapTrace('window.close', { appIsQuiting: !!app.isQuiting, uiMode: global.uiMode, currentState: global.currentState });
-        if (!app.isQuiting) {
+        appendIapTrace('window.close', { appIsQuiting: !!app.isQuiting, sessionEnding, uiMode: global.uiMode, currentState: global.currentState });
+        // NUNCA bloquear o close durante o encerramento de sessão do Windows:
+        // o preventDefault aqui impedia o shutdown e gerava HANG_QUIESCE.
+        if (!app.isQuiting && !sessionEnding) {
             event.preventDefault();
 
             // Persist the current hide/show state so startup reflects actual last state
@@ -2723,24 +2951,29 @@ async function updateConfig(newConfig) {
         }
     }
 
-    (async () => {
-        const storeCtx = getStoreInstallContext();
-        if (storeCtx.isStoreInstall) {
-            // MSIX startup is managed only by set-startup/get-startup-state IPCs.
-            return;
-        }
-        const shouldEnable = config.startup;
-        try {
-            const enabled = isLoginItemEnabled();
-            if (shouldEnable && !enabled) {
-                setLoginItemEnabled(true);
-            } else if (!shouldEnable && enabled) {
-                setLoginItemEnabled(false);
+    if (newConfig && Object.prototype.hasOwnProperty.call(newConfig, 'startup')) {
+        (async () => {
+            const storeCtx = getStoreInstallContext();
+            if (storeCtx.isStoreInstall) {
+                // MSIX startup is managed only by set-startup/get-startup-state IPCs.
+                return;
             }
-        } catch (e) {
-            console.warn('[MAIN] Config change startup sync failed:', e.message);
-        }
-    })();
+            const shouldEnable = !!config.startup;
+            try {
+                const registration = readLoginItem();
+                const enabledInWindows = registration.registered && registration.enabled;
+                // `blocked` significa que o usuário desativou a entrada na lista de
+                // inicialização do Windows: nesse caso a interface mostra o aviso e o
+                // checkbox fica desabilitado, então uma mudança de config não pode
+                // sobrescrever a escolha dele.
+                if (enabledInWindows !== shouldEnable && !(shouldEnable && registration.blocked)) {
+                    setLoginItemEnabled(shouldEnable);
+                }
+            } catch (e) {
+                console.warn('[MAIN] Config change startup sync failed:', e.message);
+            }
+        })();
+    }
 
     if (languageChanged) {
         await lang.setUserLanguage(newConfig.language);
@@ -3246,31 +3479,47 @@ const toggleShowHide = (state, source = '', force = false) => {
 
     // Ensure windows are actually hidden/shown when state changes
     if (state === 'hide') {
-        system.hideWindows().then(async (hideResult) => {
+        const hideTrace = createTransitionTrace('hide', source || 'unknown');
+        system.hideWindows(hideTrace).then(async (hideResult) => {
             console.log('[MAIN] Hidden filtered windows (hide-state)');
             const elevated = hideResult && Array.isArray(hideResult.elevated) ? hideResult.elevated : [];
             if (elevated.length > 0) {
                 console.log('[MAIN] Batch hide found', elevated.length, 'elevated window(s) to retry via helper');
-                await handleElevatedBatchHide(elevated);
+                await handleElevatedBatchHide(elevated, hideTrace);
             }
+            markTransitionStep(hideTrace, 'hide-complete');
+            logTransitionTrace(hideTrace);
             captureHideCompleted(source);
             updateNotificationBadge();
         }).catch(error => {
             console.error('[MAIN] Error hiding windows on hide-state:', error);
         });
     } else if (state === 'show') {
-        system.showWindows().then(async (showResult) => {
+        const showTrace = createTransitionTrace('show', source || 'unknown');
+        system.showWindows(showTrace).then(async (showResult) => {
             const hadHidden = showResult && typeof showResult === 'object' ? !!showResult.hadHidden : !!showResult;
             const stillHidden = showResult && Array.isArray(showResult.stillHidden) ? showResult.stillHidden : [];
             console.log('[MAIN] Restored hidden windows (show-state), hadHidden:', hadHidden, 'stillHidden:', stillHidden.length);
+
+            // Uso real (ocultou e restaurou) — base da faixa de upsell do Pro.
+            // Cada ciclo conta como um uso; abrir o app não conta.
+            if (hadHidden && proUpsell && typeof proUpsell.recordUsage === 'function') {
+                const usage = proUpsell.recordUsage();
+                if (usage && usage.added) {
+                    console.log('[MAIN] Pro upsell usage recorded:', usage.usageCount);
+                }
+            }
+
             updateNotificationBadge();
             notifyStateChanged();
 
             // Janelas elevadas não puderam ser restauradas por este processo —
             // tentamos via helper elevado (fix 1.1.2).
             if (stillHidden.length > 0) {
-                await handleElevatedBatchShow(stillHidden);
+                await handleElevatedBatchShow(stillHidden, showTrace);
             }
+            markTransitionStep(showTrace, 'show-complete');
+            logTransitionTrace(showTrace);
 
             if (hadHidden) {
                 const revealMethod = getRevealMethodForShowSource(source);
@@ -4210,6 +4459,25 @@ ipcMain.handle('get-pro-status', async () => {
     }
 });
 
+// Faixa de upsell do Pro (exibida a partir do segundo uso real: hide + restore).
+ipcMain.handle('get-pro-upsell', async () => {
+    try {
+        enforceProCheck();
+        return proUpsell.getState();
+    } catch (error) {
+        console.warn('[PRO-UPSELL] get-pro-upsell error:', error && error.message ? error.message : String(error));
+        return { eligible: false, usageCount: 0, usageDayCount: 0, minUsageCount: proUpsell.MIN_USAGE_COUNT, dismissed: true };
+    }
+});
+
+ipcMain.on('dismiss-pro-upsell', () => {
+    try {
+        proUpsell.markDismissed();
+    } catch (error) {
+        console.warn('[PRO-UPSELL] dismiss-pro-upsell error:', error && error.message ? error.message : String(error));
+    }
+});
+
 ipcMain.handle('activate-license', async (event, licenseKey) => {
     try {
         console.log('[MAIN] Attempting to activate license');
@@ -4492,69 +4760,129 @@ ipcMain.handle('validate-shortcut', async (event, shortcut) => {
 });
 
 ipcMain.handle('set-startup', async (event, enable) => {
+    const wanted = !!enable;
     try {
         const storeCtx = getStoreInstallContext();
         if (storeCtx.isStoreInstall) {
-            const state = await runWinRTStartupTask(enable ? 'enable' : 'disable');
-            console.log('[MAIN] WinRT StartupTask set to', enable ? 'enable' : 'disable', '→ state:', state);
-            const isEnabled = state === 'Enabled' || state === 'EnabledByPolicy';
-            const disabledByUser = state === 'DisabledByUser';
+            const state = await runWinRTStartupTask(wanted ? 'enable' : 'disable');
+            console.log('[MAIN] WinRT StartupTask set to', wanted ? 'enable' : 'disable', '→ state:', state);
 
-            if (state) {
-                // PowerShell succeeded — use its result
-                config.startup = isEnabled;
-                await updateConfig(config);
-                return { success: true, startupTaskState: state, isEnabled, disabledByUser };
+            if (!STARTUP_TASK_STATES.has(state)) {
+                // Um app empacotado não tem outra forma de registrar inicialização:
+                // setLoginItemSettings escreve numa chave Run que o Windows ignora para
+                // apps empacotados. Cair no fallback abaixo fingiria sucesso sem nunca
+                // habilitar a StartupTask.
+                console.warn('[MAIN] WinRT StartupTask failed for MSIX install:', state);
+                return {
+                    success: false,
+                    available: state !== 'NotFound',
+                    startupTaskState: state || null,
+                    isEnabled: false,
+                    blocked: false,
+                    message: state === 'NotFound'
+                        ? 'Este pacote não declara a tarefa de inicialização. Reinstale o aplicativo pela Store.'
+                        : 'Não foi possível configurar a inicialização automática neste dispositivo. Tente habilitá-la em Configurações > Aplicativos > Inicialização.'
+                };
             }
 
-            // WinRT falhou (null). Para instalações MSIX/Store, o
-            // app.setLoginItemSettings() do Electron é um no-op, então cair no
-            // fallback abaixo fingiria sucesso sem nunca habilitar a
-            // StartupTask — exatamente o bug relatado na 1.1.1. Reportamos a
-            // falha para a UI mostrar um erro (fix 1.1.2).
-            console.warn('[MAIN] WinRT StartupTask failed for MSIX install; no usable fallback.');
+            // Quem decide é o estado devolvido, não o pedido: o Windows recusa Enable()
+            // quando o usuário desativou a tarefa, e a resposta dela continua DisabledByUser.
+            const isEnabled = state === 'Enabled' || state === 'EnabledByPolicy';
+            const blocked = state === 'DisabledByUser' || state === 'DisabledByPolicy';
+            const applied = isEnabled === wanted;
+            config.startup = isEnabled;
+            await updateConfig(config);
             return {
-                success: false,
-                message: 'Não foi possível configurar a inicialização automática neste dispositivo. Tente habilitá-la em Configurações > Aplicativos > Inicialização.'
+                success: applied,
+                available: true,
+                startupTaskState: state,
+                isEnabled,
+                blocked,
+                disabledByUser: state === 'DisabledByUser',
+                message: applied
+                    ? undefined
+                    : state === 'DisabledByUser'
+                        ? 'A inicialização foi desativada por você nas configurações do Windows. Reative-a em Configurações > Aplicativos > Inicialização.'
+                        : state === 'DisabledByPolicy'
+                            ? 'A inicialização está bloqueada por política do sistema. Fale com o administrador.'
+                            : undefined
             };
         }
 
-        // Passo 1: Tentar com Electron API nativa (escreve em HKCU, sem elevação necessária)
+        // Instalação EXE: três escritores possíveis e um único leitor. As três APIs
+        // retornam sucesso assim que a chamada volta, então o valor gravado em HKCU é
+        // lido de novo e é ele que decide a resposta.
+        const settle = async (via) => {
+            const registration = readLoginItem();
+            if (wanted ? registration.enabled : !registration.enabled) {
+                config.startup = wanted;
+                await updateConfig(config);
+                console.log('[MAIN] Startup set via', via, '?', wanted);
+                return { success: true, isEnabled: wanted, blocked: false, appliedBy: via };
+            }
+            if (registration.blocked) {
+                // StartupApproved: o Windows está recusando a entrada, e nenhum dos
+                // três escritores muda isso — insistir com elevação só atrasaria o aviso.
+                console.warn('[MAIN] Startup blocked by Windows after', via, ':', JSON.stringify(registration));
+                return {
+                    success: false,
+                    isEnabled: registration.enabled,
+                    blocked: true,
+                    appliedBy: via,
+                    message: 'O Windows mantém esta inicialização desativada. Reative-a em Configurações > Aplicativos > Inicialização.'
+                };
+            }
+            console.warn('[MAIN] Startup written by', via, 'but Windows reports:', JSON.stringify(registration));
+            return null;
+        };
+
+        // Passo 1: API nativa do Electron (escreve em HKCU, sem elevação necessária).
         try {
-            setLoginItemEnabled(enable);
-            config.startup = enable;
-            await updateConfig(config);
-            console.log('[MAIN] Startup set via Electron API:', enable);
-            return { success: true, isEnabled: enable };
+            setLoginItemEnabled(wanted);
+            const settled = await settle('electron');
+            if (settled) return settled;
         } catch (electronError) {
             console.warn('[MAIN] Electron setLoginItemSettings failed, trying helper:', electronError.message);
-
-            // Passo 2: Tentar com helper não-elevado (também escreve em HKCU)
-            try {
-                const helperResult = await runHelperAction('set-autostart', getAutostartArgs(enable));
-                if (helperResult && helperResult.success) {
-                    config.startup = enable;
-                    await updateConfig(config);
-                    console.log('[MAIN] Startup set via helper (non-elevated):', enable);
-                    return { success: true, isEnabled: enable, helper: true };
-                }
-                throw new Error(helperResult && helperResult.message ? helperResult.message : 'Helper non-elevated failed');
-            } catch (helperError) {
-                console.warn('[MAIN] Helper non-elevated failed, trying elevated:', helperError.message);
-
-                // Passo 3: Pedir elevação como último recurso
-                if (window && await askForElevation('Startup automático', enable ? 'Habilitar inicialização com Windows' : 'Desabilitar inicialização com Windows')) {
-                    const elevatedResult = await setStartupWithElevation(enable);
-                    if (elevatedResult && elevatedResult.success) {
-                        config.startup = enable;
-                        await updateConfig(config);
-                        return { success: true, isEnabled: enable, elevated: true };
-                    }
-                    return { success: false, message: elevatedResult && elevatedResult.message ? elevatedResult.message : 'Falha ao configurar inicialização mesmo com elevação', code: elevatedResult && elevatedResult.code };
-                }
-                return { success: false, message: 'Operação cancelada pelo usuário.' };
-            }
         }
+
+        // Passo 2: helper não-elevado (também escreve em HKCU).
+        try {
+            const helperResult = await runHelperAction('set-autostart', getAutostartArgs(wanted));
+            if (!helperResult || !helperResult.success) {
+                throw new Error(helperResult && helperResult.message ? helperResult.message : 'Helper non-elevated failed');
+            }
+            const settled = await settle('helper');
+            if (settled) return settled;
+        } catch (helperError) {
+            console.warn('[MAIN] Helper non-elevated failed, trying elevated:', helperError.message);
+        }
+
+        // Passo 3: pedir elevação como último recurso.
+        if (window && await askForElevation('Startup automático', wanted ? 'Habilitar inicialização com Windows' : 'Desabilitar inicialização com Windows')) {
+            const elevatedResult = await setStartupWithElevation(wanted);
+            if (elevatedResult && elevatedResult.success) {
+                const settled = await settle('elevated');
+                if (settled) return settled;
+            }
+            const afterElevation = readLoginItem();
+            return {
+                success: false,
+                isEnabled: afterElevation.enabled,
+                blocked: afterElevation.blocked,
+                message: elevatedResult && elevatedResult.message ? elevatedResult.message : 'Falha ao configurar inicialização mesmo com elevação',
+                code: elevatedResult && elevatedResult.code
+            };
+        }
+
+        const registration = readLoginItem();
+        return {
+            success: false,
+            isEnabled: registration.enabled,
+            blocked: registration.blocked,
+            message: registration.blocked
+                ? 'O Windows mantém esta inicialização desativada. Reative-a em Configurações > Aplicativos > Inicialização.'
+                : 'Operação cancelada pelo usuário.'
+        };
     } catch (error) {
         console.error('[MAIN] Error setting startup:', error);
         return { success: false, message: error.message || 'Falha ao configurar inicialização' };
@@ -4566,18 +4894,35 @@ ipcMain.handle('get-startup-state', async () => {
         const storeCtx = getStoreInstallContext();
         if (storeCtx.isStoreInstall) {
             const state = await runWinRTStartupTask('get');
-            if (state) {
-                const isEnabled = state === 'Enabled' || state === 'EnabledByPolicy';
-                return { isStoreInstall: true, state, isEnabled };
+            if (!STARTUP_TASK_STATES.has(state)) {
+                // Sem fallback de propósito: sob identidade de pacote
+                // setLoginItemSettings é um no-op, então ler a chave Run do EXE daria um
+                // checkbox que não afeta esta instalação.
+                console.warn('[MAIN] WinRT StartupTask get failed:', state);
+                return { isStoreInstall: true, available: false, state: state || null, isEnabled: false, blocked: false };
             }
-            // PowerShell failed — fallback to Electron API
-            console.warn('[MAIN] WinRT StartupTask get failed, falling back to Electron API');
+            const isEnabled = state === 'Enabled' || state === 'EnabledByPolicy';
+            return {
+                isStoreInstall: true,
+                available: true,
+                state,
+                isEnabled,
+                blocked: state === 'DisabledByUser' || state === 'DisabledByPolicy'
+            };
         }
-        const isEnabled = isLoginItemEnabled();
-        return { isStoreInstall: storeCtx.isStoreInstall || false, isEnabled: !!isEnabled };
+
+        const registration = readLoginItem();
+        return {
+            isStoreInstall: false,
+            available: true,
+            state: null,
+            registered: registration.registered,
+            isEnabled: registration.enabled,
+            blocked: registration.blocked
+        };
     } catch (error) {
         console.error('[MAIN] Error getting startup state:', error);
-        return { isStoreInstall: false, isEnabled: !!config.startup };
+        return { isStoreInstall: false, available: false, isEnabled: false, blocked: false, message: error.message };
     }
 });
 
@@ -5041,8 +5386,8 @@ app.whenReady().then(async () => {
             // (electron-builder appId: Edenware.app.Snapcover), otherwise
             // Windows shows the raw AUMID as the notification title instead
             // of the app display name ("SnapAway").
-            app.setAppUserModelId('Edenware.app.Snapcover');
-            console.log('[MAIN] setAppUserModelId: Edenware.app.Snapcover');
+            app.setAppUserModelId(APP_USER_MODEL_ID);
+            console.log('[MAIN] setAppUserModelId:', APP_USER_MODEL_ID);
         } catch (error) {
             console.warn('[MAIN] Failed to set AppUserModelId:', error);
         }
@@ -5165,8 +5510,12 @@ app.whenReady().then(async () => {
     // config.language is always set by detectAndSetLanguage(); apply it to the lang module.
     await lang.setUserLanguage(config.language);
 
-    const isLoginItemLaunch = app.getLoginItemSettings ? app.getLoginItemSettings({ path: process.execPath }).wasOpenedAtLogin : false;
-    const isAutoStartLaunch = process.argv.includes('--autostart') || isLoginItemLaunch;
+    // --autostart is the only reliable marker: the login item writes
+    // "<exe>" --autostart into the Run key, and no other launch path passes it.
+    // wasOpenedAtLogin is only filled on macOS, and a packaged build cannot pass
+    // arguments through a startup task, so nothing distinguishes a launch from the
+    // Store build's sign-in start from a manual one.
+    const isAutoStartLaunch = process.argv.includes(AUTOSTART_ARG);
 
     const shouldRunIapDevTest = process.env.IAP_DEV_TEST === '1' || process.argv.includes('--iap-test');
     if (shouldRunIapDevTest) {
@@ -5646,15 +5995,49 @@ app.on('second-instance', () => {
     }
 });
 
+// Cleanup nativo de áudio/ícones no encerramento: roda FORA do caminho crítico.
+// O teardown é síncrono por dentro (COM) e pode pendurar a main thread — é um
+// dos candidatos a HANG_QUIESCE / ENDTASK_HungThreadIsIdle. Por isso aqui ele:
+//  - nunca é aguardado (não atrasa o quit);
+//  - é agendado para DEPOIS de o quit já estar comprometido (setImmediate);
+//  - é pulado no encerramento de sessão do Windows (orçamento de quiesce curto);
+//  - é idempotente (system.cleanupAudio roda no máximo uma vez por processo);
+//  - se o processo sair antes dele rodar, o SO libera os recursos.
+function scheduleAudioCleanup(reason) {
+    if (sessionEnding) return;
+    setImmediate(() => {
+        if (sessionEnding) return;
+        try {
+            const cleanup = system.cleanupAudio({ reason });
+            if (cleanup && typeof cleanup.then === 'function') {
+                cleanup.then(stats => {
+                    if (stats && stats.timedOut) {
+                        // Diagnóstico: se isto aparecer no próximo ciclo, o cleanup
+                        // (ou o dispositivo de áudio) está travando o encerramento.
+                        appendIapTrace('audio.cleanup.slow', { reason, durationMs: stats.durationMs });
+                        if (telemetry && typeof telemetry.captureTelemetryEvent === 'function') {
+                            telemetry.captureTelemetryEvent('app.audio-cleanup-slow', {
+                                reason,
+                                durationMs: stats.durationMs
+                            }, { sendToSentry: true });
+                        }
+                    }
+                }).catch(() => { });
+            }
+        } catch (error) {
+            console.error('[MAIN] Error cleaning up audio system:', error);
+        }
+    });
+}
+
 app.on('window-all-closed', () => {
     appendIapTrace('app.window-all-closed', { platform: process.platform });
     stopTitlebarOverlay()
     if (process.platform !== 'darwin') {
-        // Limpar sistema de áudio antes de sair
-        system.cleanupAudio().catch(error => {
-            console.error('[MAIN] Error cleaning up audio system:', error);
-        });
         app.isQuiting = true;
+        // Best effort e sem await: o app.quit() abaixo não espera a limpeza
+        // nativa de áudio (que antes rodava aqui, dentro do caminho do quit).
+        scheduleAudioCleanup('window-all-closed');
         app.quit();
     }
 });
@@ -5667,9 +6050,29 @@ app.on('activate', () => {
     }
 });
 
-app.on('before-quit', () => {
+app.on('before-quit', (event) => {
     stopTitlebarOverlay()
     stopElevatedHelperServer()
+
+    // Rede de segurança: cobre caminhos de quit que não passam por
+    // window-all-closed. É idempotente e diferido, então não atrasa o quit.
+    scheduleAudioCleanup('before-quit');
+
+    // Durante o encerramento de sessão do Windows NÃO atrasamos o quit: o
+    // orçamento de quiesce é curto e qualquer espera vira HANG_QUIESCE.
+    if (sessionEnding) return;
+
+    // Garante o envio dos eventos pendentes ao Sentry antes de sair (o
+    // transporte é assíncrono; sem flush os últimos eventos são perdidos).
+    // preventDefault só na primeira passagem, com timeout curto, para não
+    // travar o quit.
+    if (!telemetryFlushed && telemetry && typeof telemetry.flushTelemetry === 'function') {
+        event.preventDefault();
+        telemetryFlushed = true;
+        telemetry.flushTelemetry(1500)
+            .catch(() => { })
+            .finally(() => { app.quit(); });
+    }
 })
 
 // Windows: sessão encerrando (desligar, reiniciar ou sair da conta). O Windows
@@ -5678,46 +6081,47 @@ app.on('before-quit', () => {
 // no painel de Health da Store). Aqui finalizamos rápido: sem diálogos e sem
 // cleanup longo, dentro do orçamento do sistema.
 app.on('session-end', () => {
+    // Marca as flags ANTES de qualquer trabalho: garante que o handler
+    // 'close' da janela não faça preventDefault (era isso que bloqueava o
+    // shutdown do Windows e virava o bucket HANG_QUIESCE).
+    sessionEnding = true;
+    app.isQuiting = true;
     try {
         appendIapTrace('app.session-end');
         if (telemetry && typeof telemetry.captureTelemetryEvent === 'function') {
             telemetry.captureTelemetryEvent('app.session-end');
         }
-        app.isQuiting = true;
         stopElevatedHelperServer();
-        app.quit();
     } catch (error) {
         console.warn('[MAIN] session-end handler error:', error && error.message ? error.message : String(error));
     }
+    // Sai IMEDIATAMENTE, dentro do orçamento de quiesce do Windows: sem flush de
+    // telemetria, sem cleanup longo. Qualquer atraso aqui vira HANG_QUIESCE.
+    app.exit(0);
 })
 
-app.on('child-process-gone', (event, details) => {
-    console.error('[MAIN] child-process-gone:', details);
-    appendIapTrace('app.child-process-gone', details || null);
-    if (telemetry && typeof telemetry.captureTelemetryEvent === 'function') {
-        telemetry.captureTelemetryEvent('app.child-process-gone', details || null);
-    }
-});
+// O evento `gpu-process-crashed` entrega apenas (event, killed) — sem exitCode e
+// sem serviceName. O `child-process-gone` do tipo 'GPU' descreve o MESMO processo
+// com reason/exitCode, mas a ordem entre os dois eventos não é garantida, então
+// guardamos por alguns segundos o último details de GPU para enriquecer o payload
+// e conseguir separar crash real (killed=false) de término intencional
+// (killed=true) no Sentry.
+const GPU_GONE_CACHE_MS = 5000;
+let lastGpuGone = null;
 
-app.on('render-process-gone', (event, webContents, details) => {
-    console.error('[MAIN] app render-process-gone:', details);
-    appendIapTrace('app.render-process-gone', details || null);
-    if (telemetry && typeof telemetry.captureTelemetryEvent === 'function') {
-        telemetry.captureTelemetryEvent('app.render-process-gone', details || null);
-    }
-});
-
-app.on('gpu-process-crashed', (event, killed) => {
-    console.error('[MAIN] gpu-process-crashed:', { killed });
-    appendIapTrace('app.gpu-process-crashed', { killed });
-    if (telemetry && typeof telemetry.captureTelemetryEvent === 'function') {
-        telemetry.captureTelemetryEvent('app.gpu-process-crashed', { killed });
+// Resiliência (fallback GPU): conta crashes REAIS do processo GPU e, ao cruzar
+// o limiar, reinicia o app uma vez para aplicar o fallback (`--disable-gpu`) já
+// na próxima sessão. Duas fontes descrevem o mesmo crash —
+// `child-process-gone` type 'GPU' (com reason/exitCode) e o deprecado
+// `gpu-process-crashed` — então `gpuPolicy.recordGpuCrash()` deduplica as duas.
+// Término intencional (killed / reason 'killed') nunca conta: desligaria a GPU
+// da máquina do usuário sem nenhum crash real ter acontecido.
+function recordGpuCrashForFallback(source) {
+    if (app.isQuiting) {
+        appendIapTrace(`app.gpu-fallback.skipped-${source}`);
+        return;
     }
 
-    // Resiliência (fallback GPU): após crashes repetidos, desliga a aceleração
-    // de hardware (persistido). Se acabou de cruzar o limiar, reinicia o app
-    // uma vez para aplicar o fallback imediatamente. Não reinicia de novo se já
-    // estiver desabilitado (evita loop crash→relaunch→crash).
     try {
         const shouldRelaunch = gpuPolicy.recordGpuCrash(app);
         if (shouldRelaunch) {
@@ -5730,6 +6134,67 @@ app.on('gpu-process-crashed', (event, killed) => {
     } catch (err) {
         console.warn('[GPU FALLBACK] Failed to record GPU crash:', err && err.message ? err.message : err);
     }
+}
+
+app.on('child-process-gone', (event, details) => {
+    if (details && details.type === 'GPU') {
+        lastGpuGone = { at: Date.now(), details };
+    }
+    console.error('[MAIN] child-process-gone:', details);
+    appendIapTrace('app.child-process-gone', details || null);
+    if (telemetry && typeof telemetry.captureTelemetryEvent === 'function') {
+        telemetry.captureTelemetryEvent('app.child-process-gone', details || null);
+    }
+
+    // Fonte primária da contagem: `gpu-process-crashed` é deprecado no Electron
+    // e pode parar de disparar; este evento sempre traz reason/exitCode.
+    if (details && details.type === 'GPU' && details.reason === 'crashed') {
+        recordGpuCrashForFallback('child-process-gone');
+    }
+});
+
+app.on('render-process-gone', (event, webContents, details) => {
+    console.error('[MAIN] app render-process-gone:', details);
+    appendIapTrace('app.render-process-gone', details || null);
+    if (telemetry && typeof telemetry.captureTelemetryEvent === 'function') {
+        telemetry.captureTelemetryEvent('app.render-process-gone', details || null);
+    }
+});
+
+app.on('gpu-process-crashed', (event, killed) => {
+    // Enriquecimento com o `child-process-gone` do mesmo processo GPU. Só usamos o
+    // cache quando o `reason` é coerente com `killed`, para não rotular um crash
+    // real como término intencional por causa de um evento antigo no cache.
+    const cached = (lastGpuGone && (Date.now() - lastGpuGone.at) <= GPU_GONE_CACHE_MS)
+        ? lastGpuGone.details
+        : null;
+    const expectedReason = killed ? 'killed' : 'crashed';
+    const gpuGone = (cached && cached.reason === expectedReason) ? cached : null;
+    const gpuCrashDetails = Object.assign(
+        { killed: !!killed, reason: expectedReason },
+        gpuGone ? { exitCode: gpuGone.exitCode, serviceName: gpuGone.serviceName, type: gpuGone.type } : {}
+    );
+
+    console.error('[MAIN] gpu-process-crashed:', gpuCrashDetails);
+    appendIapTrace('app.gpu-process-crashed', gpuCrashDetails);
+    if (telemetry && typeof telemetry.captureTelemetryEvent === 'function') {
+        telemetry.captureTelemetryEvent('app.gpu-process-crashed', gpuCrashDetails);
+    }
+
+    // Resiliência (fallback GPU): após crashes repetidos, desliga a GPU
+    // (persistido). Se acabou de cruzar o limiar, reinicia o app uma vez para
+    // aplicar o fallback imediatamente. Não reinicia de novo se já estiver
+    // desabilitado (evita loop crash→relaunch→crash).
+    //
+    // Só crash de verdade conta para o limiar: `killed === true` significa que o
+    // processo foi terminado de propósito (shutdown / session-end), e contar isso
+    // desligaria a GPU da máquina do usuário sem nenhum crash real ter acontecido.
+    if (killed) {
+        appendIapTrace('app.gpu-fallback.skipped-killed');
+        return;
+    }
+
+    recordGpuCrashForFallback('gpu-process-crashed');
 });
 
 app.on('suspend', () => {

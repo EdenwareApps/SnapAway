@@ -9,6 +9,7 @@
 #include <cstring>
 #include <thread>
 #include <atomic>
+#include <exception>
 
 // Declare IInitializeWithWindow inline to avoid shobjidl_core.h / WinRT IUnknown ambiguity.
 // The GUID is the official COM interface GUID for IInitializeWithWindow.
@@ -65,6 +66,21 @@ static std::string HResultToHex(HRESULT hr) {
   return ss.str();
 }
 
+// Descreve a exceção C++ em tratamento no momento (chamar SÓ de dentro de um
+// bloco catch). Usada para converter em texto a exceção que escapou do corpo
+// executado numa std::thread.
+static std::string DescribeCurrentException() {
+  try {
+    throw;
+  } catch (const winrt::hresult_error& e) {
+    return winrt::to_string(e.message());
+  } catch (const std::exception& e) {
+    return std::string(e.what());
+  } catch (...) {
+    return std::string("unknown exception");
+  }
+}
+
 static const std::string DefaultStoreProductId = "9NNLVZPCLLTZ";
 
 static std::string GetStoreContextUserId(const StoreContext& context) {
@@ -105,6 +121,52 @@ bool EnsureWinRTApartment() {
     return false;
   }
 }
+
+// Desfaz o apartamento que ESTA thread inicializou em EnsureWinRTApartment().
+// Só desfaz o que nós iniciamos (g_apartmentInitialized é thread_local): a
+// thread principal do Electron pode já ter apartamento inicializado por outros
+// subsistemas, e desfazê-lo ali quebraria o resto do app — por isso só os
+// workers (thread do pool) usam o escopo abaixo.
+void ReleaseWinRTApartment() {
+  if (!g_apartmentInitialized) {
+    return;
+  }
+  g_apartmentInitialized = false;
+  try {
+    uninit_apartment();
+  } catch (...) {
+    // best-effort: não deixar exceção vazar pelo worker
+  }
+}
+
+// Escopo RAII do apartamento WinRT para trabalho que roda em thread do pool do
+// libuv (Napi::AsyncWorker::Execute).
+//
+// Por que existe: sem isto, cada thread do pool que chama WinRT inicializa uma
+// STA (apartment_type::single_threaded) que NUNCA era desfeita —
+// `uninit_apartment()` não era chamado em lugar nenhum. No fim do processo essas
+// threads morrem sem CoUninitialize e o runtime da Store libera objetos/proxies
+// com o apartamento já morto: `ComPtr<T>::InternalRelease` lendo
+// 0xFFFFFFFFFFFFFFFF (EXCEPTION_ACCESS_VIOLATION_READ) — o crash nativo
+// ELECTRON-1A, cuja stack passa por RPCRT4 (proxy COM) e pelas entranhas de
+// Windows.ApplicationModel.Store.dll durante o teardown.
+//
+// O objeto PRECISA ser o primeiro local de Execute(): assim ele é destruído por
+// último, depois de todos os objetos WinRT daquele bloco (StoreContext,
+// StoreProduct, IVector...) terem sido liberados na mesma thread/apartamento.
+class WinRTApartmentScope {
+public:
+  WinRTApartmentScope() : initialized_(EnsureWinRTApartment()) {}
+  ~WinRTApartmentScope() { ReleaseWinRTApartment(); }
+
+  WinRTApartmentScope(const WinRTApartmentScope&) = delete;
+  WinRTApartmentScope& operator=(const WinRTApartmentScope&) = delete;
+
+  bool ok() const { return initialized_; }
+
+private:
+  bool initialized_;
+};
 
 // Helper function to verify whether a StoreContext already has a valid user
 static bool HasValidStoreContextUser(const StoreContext& context) {
@@ -199,7 +261,8 @@ public:
     : IapWorker(env), productId_(productId), isOwned_(false) {}
 
   void Execute() override {
-    if (!EnsureWinRTApartment()) {
+    WinRTApartmentScope winrtApartment;
+    if (!winrtApartment.ok()) {
       SetError("Store context unavailable");
       return;
     }
@@ -247,7 +310,8 @@ public:
     : IapWorker(env), isPro_(false), appLimit_(2) {}
 
   void Execute() override {
-    if (!EnsureWinRTApartment()) {
+    WinRTApartmentScope winrtApartment;
+    if (!winrtApartment.ok()) {
       SetError("Store context unavailable");
       return;
     }
@@ -360,7 +424,8 @@ public:
     : IapWorker(env) {}
 
   void Execute() override {
-    if (!EnsureWinRTApartment()) {
+    WinRTApartmentScope winrtApartment;
+    if (!winrtApartment.ok()) {
       SetError("Store context unavailable");
       return;
     }
@@ -437,7 +502,8 @@ public:
     : IapWorker(env), initialized_(false) {}
 
   void Execute() override {
-    if (!EnsureWinRTApartment()) {
+    WinRTApartmentScope winrtApartment;
+    if (!winrtApartment.ok()) {
       error_ = "Failed to initialize Store context";
       return;
     }
@@ -501,7 +567,8 @@ public:
       associatedCount_(0), associatedProductFound_(false), appLicenseAvailable_(false), licensedAddOnCount_(0), extendedErrorValue_(0) {}
 
   void Execute() override {
-    if (!EnsureWinRTApartment()) {
+    WinRTApartmentScope winrtApartment;
+    if (!winrtApartment.ok()) {
       storeContextError_ = "Store context unavailable";
       error_ = "Store context unavailable";
       return;
@@ -535,6 +602,13 @@ public:
       error_ = "StoreContext user invalid";
       return;
     }
+
+    // O StoreProduct precisa ser LOCAL: criado nesta thread/apartamento (pool do
+    // libuv) e liberado nela mesma, ANTES de o escopo acima desfazer o
+    // apartamento. Como membro do worker ele sobrevivia ao Execute() e era
+    // destruído na thread de JS — um Release cross-apartment em um proxy cujo
+    // apartamento de origem já não existia (ELECTRON-1A).
+    StoreProduct storeProduct{ nullptr };
 
     auto productKinds = CreateStoreProductKinds();
     auto associatedStart = std::chrono::steady_clock::now();
@@ -592,7 +666,7 @@ public:
       firstId = false;
 
       if (winrt::to_string(storeProductItem.StoreId()) == productId_) {
-        storeProduct_ = storeProductItem;
+        storeProduct = storeProductItem;
         associatedProductFound_ = true;
       }
     }
@@ -628,7 +702,7 @@ public:
     }
 
     // Cache the StoreId string to avoid cross-apartment WinRT object access
-    purchaseStoreId_ = winrt::to_string(storeProduct_.StoreId());
+    purchaseStoreId_ = winrt::to_string(storeProduct.StoreId());
 
     // Phase 2: RequestPurchaseAsync must run on a dedicated STA thread with a
     // Win32 message pump so that the Windows Store purchase UI (XAML dialog)
@@ -640,9 +714,22 @@ public:
 private:
   void RunPurchaseOnSTA() {
     std::thread staThread([this]() {
-      ::CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
-      DoRunPurchaseOnSTA();
-      ::CoUninitialize();
+      // CoUninitialize() só pode ser chamado se o CoInitializeEx() tiver contado
+      // uma inicialização; desbalancear derruba o COM da thread cedo demais.
+      const HRESULT hr = ::CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+      // O invoker de std::thread é noexcept: exceção que escape daqui chama
+      // std::terminate e mata o processo (crash nativo "Unhandled C++ Exception"
+      // / RaiseException — ELECTRON-19/W/10/13/16/18). Diferente do Execute() do
+      // AsyncWorker, aqui NÃO existe o try/catch do node-addon-api.
+      try {
+        DoRunPurchaseOnSTA();
+      } catch (...) {
+        status_ = "Error";
+        error_ = "STA thread threw: " + DescribeCurrentException();
+      }
+      if (SUCCEEDED(hr)) {
+        ::CoUninitialize();
+      }
     });
     staThread.join();
   }
@@ -707,7 +794,13 @@ private:
               case StorePurchaseStatus::ServerError:      status_ = "ServerError"; break;
               default:                                    status_ = "Unknown"; break;
             }
-            extendedErrorValue_ = static_cast<uint32_t>(result.ExtendedError().value);
+            // Mesma proteção do fluxo de avaliação: se `ExtendedError()` lançar,
+            // o status já apurado (ex.: "Purchased") não pode ser perdido.
+            try {
+              extendedErrorValue_ = static_cast<uint32_t>(result.ExtendedError().value);
+            } catch (...) {
+              extendedErrorValue_ = 0;
+            }
             extendedErrorStr_ = HResultToHex(extendedErrorValue_);
             if (extendedErrorValue_ != 0) {
               printf("[IAP-NATIVE] RequestPurchaseAsync extendedError = 0x%08X\n", extendedErrorValue_);
@@ -807,7 +900,6 @@ private:
   std::string purchaseStoreId_;
   uint32_t hwndLow_ = 0;
   uint32_t hwndHigh_ = 0;
-  StoreProduct storeProduct_{ nullptr };
   bool storeContextInitialized_ = false;
   bool storeContextUserValid_ = false;
   std::string storeContextUserId_;
@@ -868,9 +960,18 @@ public:
 private:
   void RunRateAndReviewOnSTA() {
     std::thread staThread([this]() {
-      ::CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
-      DoRunRateAndReviewOnSTA();
-      ::CoUninitialize();
+      // Idem RunPurchaseOnSTA: só desfaz o que foi de fato inicializado.
+      const HRESULT hr = ::CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+      // Exceção que escape do corpo da std::thread chama std::terminate.
+      try {
+        DoRunRateAndReviewOnSTA();
+      } catch (...) {
+        status_ = "Error";
+        error_ = "STA thread threw: " + DescribeCurrentException();
+      }
+      if (SUCCEEDED(hr)) {
+        ::CoUninitialize();
+      }
     });
     staThread.join();
   }

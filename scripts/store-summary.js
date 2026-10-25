@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env node
+#!/usr/bin/env node
 
 /**
  * SnapAway - Microsoft Store Submission Summary
@@ -64,8 +64,8 @@ const deliverables = [
     status: 'âœ“ Working'
   },
   {
-    file: 'scripts/build-appx.js',
-    desc: 'APPX Build & Sign Script',
+    file: 'scripts/fix-appx-installer-data.py',
+    desc: 'Appx manifest fix-up after electron-builder',
     status: 'âœ“ Working'
   },
   {
@@ -106,7 +106,7 @@ console.log('      â€¢ Read: docs/PARTNER_CENTER_SETUP.md');
 console.log('');
 console.log('   2. SIGN APPX (IF NEEDED)');
 console.log('      â€¢ If you have a certificate:');
-console.log('        node scripts/build-appx.js --sign --cert path/to/cert.pfx');
+console.log('        npm run dist:appx');
 console.log('');
 console.log('   3. ACCESS PARTNER CENTER');
 console.log('      â€¢ URL: https://partner.microsoft.com/dashboard');
@@ -213,7 +213,7 @@ All technical preparation for Microsoft Store submission is complete!
    - Troubleshooting guide
 
 4. **Scripts**
-   - Build APPX: \`node scripts/build-appx.js\`
+   - Build APPX: \`npm run appx\` (signed: \`npm run dist:appx\`)
    - Validate: \`node scripts/validate-store-compliance.js\`
    - Prepare: \`node scripts/prepare-submission.js\`
    - Monitor: \`node scripts/post-submission-guide.js\`

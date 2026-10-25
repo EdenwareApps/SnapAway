@@ -1,0 +1,26 @@
+; TEMPLATE do .sentryclirc (este arquivo SIM pode ser commitado; ele não
+; contém token). Copie-o para `.sentryclirc` (que está no .gitignore) e
+; cole o token no lugar do placeholder.
+;
+;   copy .sentryclirc.example .sentryclirc     :: Windows (cmd)
+;   cp .sentryclirc.example .sentryclirc       # bash
+;
+; Formato INI lido pelo sentry-cli e por scripts/upload-native-symbols.js.
+;
+; Token: Sentry → Settings → Auth Tokens → Create New Token, com os escopos:
+;   project:releases  (ou project:write)  → enviar os PDBs dos addons
+;   project:read                          → leitura básica do projeto
+;
+; Alternativa sem arquivo: definir a variável de ambiente SENTRY_AUTH_TOKEN
+; (tem precedência sobre este arquivo).
+;
+; Nota: sem a chave `url` de propósito — quando o token vem da variável de
+; ambiente, uma URL no arquivo faz o sentry-cli avisar que a URL e o token
+; vêm de fontes diferentes. A URL padrão (https://sentry.io/) já é usada.
+
+[defaults]
+org = edenwareapp
+project = electron
+
+[auth]
+token = <SEU_SENTRY_AUTH_TOKEN>

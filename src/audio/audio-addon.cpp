@@ -220,19 +220,34 @@ public:
     }
 };
 
-static AudioController audioController;
+// Instância única do controlador, alocada no heap e DELIBERADAMENTE nunca
+// destruída (o SO recupera a memória no fim do processo).
+//
+// Por que não `static AudioController audioController;` direto: nesse caso o
+// destrutor roda durante o teardown estático do processo (DLL_PROCESS_DETACH) e
+// chama Release() nos objetos COM + CoUninitialize(). Nesse momento o ole32 já
+// pode ter sido descarregado e a ordem de detach entre DLLs não é garantida —
+// soltar COM aí é comportamento indefinido, e é exatamente a classe do crash
+// nativo ELECTRON-1A (que apareceu em iap_addon.node, mesmo padrão).
+//
+// O encerramento normal continua limpando de verdade: a limpeza explícita
+// chamada pelo JS (cleanupAudio -> CleanupAudio) segue valendo e é idempotente.
+static AudioController& GetAudioController() {
+    static AudioController* controller = new AudioController();
+    return *controller;
+}
 
 Napi::Value InitializeAudio(const Napi::CallbackInfo& info) {
     Napi::Env env = info.Env();
     
-    bool success = audioController.initialize();
+    bool success = GetAudioController().initialize();
     return Napi::Boolean::New(env, success);
 }
 
 Napi::Value CleanupAudio(const Napi::CallbackInfo& info) {
     Napi::Env env = info.Env();
     
-    audioController.cleanup();
+    GetAudioController().cleanup();
     return env.Undefined();
 }
 
@@ -252,7 +267,7 @@ Napi::Value MuteProcess(const Napi::CallbackInfo& info) {
     DWORD processId = info[0].As<Napi::Number>().Uint32Value();
     bool mute = info[1].As<Napi::Boolean>().Value();
     
-    bool success = audioController.muteProcess(processId, mute);
+    bool success = GetAudioController().muteProcess(processId, mute);
     return Napi::Boolean::New(env, success);
 }
 
@@ -271,7 +286,7 @@ Napi::Value HasActiveAudioSession(const Napi::CallbackInfo& info) {
     
     DWORD processId = info[0].As<Napi::Number>().Uint32Value();
     
-    bool hasSession = audioController.hasActiveAudioSession(processId);
+    bool hasSession = GetAudioController().hasActiveAudioSession(processId);
     return Napi::Boolean::New(env, hasSession);
 }
 

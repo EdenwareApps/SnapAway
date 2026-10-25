@@ -7,6 +7,11 @@ const {
   getTitlebarAnalysisCacheState,
   warmupTitlebarAnalysis
 } = require('./titlebar-screenshot-analyzer')
+const {
+  evaluateWindowTarget,
+  isWindowDiagnosticsEnabled,
+  logWindowDecision
+} = require('../shared/window-eligibility')
 
 const DWMWA_EXTENDED_FRAME_BOUNDS = 9
 const DWMWA_CLOAKED = 14
@@ -14,23 +19,16 @@ const DWMWA_CAPTION_BUTTON_BOUNDS = 5
 const DWMWA_CAPTION_COLOR = 35
 const DWMWA_USE_IMMERSIVE_DARK_MODE = 20
 const GA_ROOT = 2
+const GWL_STYLE = -16
+const GWL_EXSTYLE = -20
+const GW_OWNER = 4
+const PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+const PROCESS_NAME_MAX = 1024
 
-const BLOCKED_CLASS_NAMES = new Set([
-  'Shell_TrayWnd',
-  'Shell_SecondaryTrayWnd',
-  'Progman',
-  'WorkerW',
-  'Windows.UI.Core.CoreWindow',
-  'Windows.Internal.Shell.TabProxyWindow'
-])
-
-const LIKELY_GAME_CLASS_NAMES = new Set([
-  'UnrealWindow',
-  'UnityWndClass',
-  'CEF-OSC-WIDGET',
-  'SDL_app',
-  'PX_WINDOW_CLASS'
-])
+// Window class block/allow decisions now live in the shared module
+// (src/shared/window-eligibility.js), so the overlay, the app list and the
+// koffi fallback all use the same rules. Game classes are intentionally NOT
+// blocked there: they are usually the game's real main window.
 
 function ptrToHwndString(hwnd) {
   if (!hwnd) return ''
@@ -72,6 +70,7 @@ function createInterop() {
 
   const user32 = koffi.load('user32.dll')
   const dwmapi = koffi.load('dwmapi.dll')
+  const kernel32 = koffi.load('kernel32.dll')
 
   return {
     POINT,
@@ -86,6 +85,11 @@ function createInterop() {
       IsWindowVisible: user32.func('bool __stdcall IsWindowVisible(void * hWnd)'),
       GetWindowThreadProcessId: user32.func('uint32_t __stdcall GetWindowThreadProcessId(void * hWnd, _Out_ uint32_t *lpdwProcessId)'),
       GetAncestor: user32.func('void * __stdcall GetAncestor(void * hWnd, uint32_t gaFlags)'),
+      GetWindow: user32.func('void * __stdcall GetWindow(void * hWnd, uint32_t uCmd)'),
+      GetWindowLongPtrW: user32.func('int64 __stdcall GetWindowLongPtrW(void * hWnd, int nIndex)'),
+      OpenProcess: kernel32.func('void * __stdcall OpenProcess(uint32_t dwDesiredAccess, bool bInheritHandle, uint32_t dwProcessId)'),
+      QueryFullProcessImageNameW: kernel32.func('bool __stdcall QueryFullProcessImageNameW(void * hProcess, uint32_t dwFlags, _Out_ char16_t *lpExeName, _Inout_ uint32_t *lpdwSize)'),
+      CloseHandle: kernel32.func('bool __stdcall CloseHandle(void * hObject)'),
       DwmGetWindowAttribute: dwmapi.func('int __stdcall DwmGetWindowAttribute(void * hwnd, uint32_t dwAttribute, void * pvAttribute, uint32_t cbAttribute)')
     }
   }
@@ -171,12 +175,59 @@ function createWindowTracker(options = {}) {
   const funcs = interop && interop.funcs
   const RECT = interop && interop.RECT
 
+  // Adapter exposing the Win32 queries the shared eligibility decision needs.
+  function pidOfHwnd(h) {
+    try {
+      const pid = [0]
+      funcs.GetWindowThreadProcessId(h, pid)
+      return Number(pid[0])
+    } catch (_) {
+      return 0
+    }
+  }
+
+  function processNameOf(pid) {
+    if (!pid || !funcs || !funcs.OpenProcess) return ''
+    let handle = null
+    try {
+      handle = funcs.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid)
+      if (!handle) return ''
+      const buffer = Buffer.alloc(PROCESS_NAME_MAX * 2)
+      const sizeHolder = [PROCESS_NAME_MAX]
+      if (!funcs.QueryFullProcessImageNameW(handle, 0, buffer, sizeHolder)) return ''
+      const fullPath = buffer.toString('utf16le', 0, sizeHolder[0] * 2)
+      return fullPath.split('\\').pop() || fullPath
+    } catch (_) {
+      return ''
+    } finally {
+      try { if (handle) funcs.CloseHandle(handle) } catch (_) {}
+    }
+  }
+
+  function longPtrOf(h, index) {
+    try { return funcs.GetWindowLongPtrW(h, index) } catch (_) { return 0 }
+  }
+
+  const windowApi = {
+    isWindow: (h) => !!(funcs && funcs.IsWindow(h)),
+    getStyle: (h) => longPtrOf(h, GWL_STYLE),
+    getExStyle: (h) => longPtrOf(h, GWL_EXSTYLE),
+    getOwner: (h) => { try { return funcs.GetWindow(h, GW_OWNER) } catch (_) { return 0 } },
+    isVisible: (h) => !!(funcs && funcs.IsWindowVisible(h)),
+    isCloaked: (h) => { const c = readDword(funcs, h, DWMWA_CLOAKED); return !!(c && c !== 0) },
+    getClassName: (h) => getClassName(funcs, h),
+    processIdOf: pidOfHwnd,
+    getProcessName: (h) => processNameOf(pidOfHwnd(h)),
+    formatHwnd: (h) => (h ? (ptrToHwndString(h) || '0x0') : '0x0')
+  }
+
   const state = {
     timer: null,
     running: false,
     lastHwnd: null,
     lastTick: 0,
-    lastAnalysisStateKey: ''
+    lastAnalysisStateKey: '',
+    lastDiagKey: ''
   }
 
   const pollIntervalActiveMs = Number(options.pollIntervalActiveMs) || 110
@@ -215,8 +266,19 @@ function createWindowTracker(options = {}) {
       return { eligible: false, reason: 'own-window' }
     }
 
-    if (!funcs.IsWindowVisible(rootHwnd)) {
-      return { eligible: false, reason: 'window-not-visible' }
+    // Single structural decision (child / owner / visibility / cloaked + the
+    // documented class exceptions), shared with the app list and the koffi
+    // fallback so nobody re-implements "what is a target window".
+    const eligibility = evaluateWindowTarget(windowApi, rootHwnd, { ownProcessId: process.pid })
+    if (!eligibility.eligible) {
+      if (isWindowDiagnosticsEnabled()) {
+        const diagKey = `${hwnd}:${eligibility.reason}`
+        if (diagKey !== state.lastDiagKey) {
+          state.lastDiagKey = diagKey
+          logWindowDecision(windowApi, rootHwnd, { ownProcessId: process.pid })
+        }
+      }
+      return { eligible: false, reason: eligibility.reason, hwnd, className: eligibility.className }
     }
 
     // Use top-level window geometry to avoid anchoring to child controls.
@@ -226,18 +288,7 @@ function createWindowTracker(options = {}) {
     funcs.GetWindowThreadProcessId(geometryHwnd, processIdHolder)
     const processId = Number(processIdHolder[0])
 
-    if (processId === process.pid) {
-      return { eligible: false, reason: 'snapaway-process-window' }
-    }
-
-    const className = getClassName(funcs, geometryHwnd) || getClassName(funcs, rootHwnd)
-    if (BLOCKED_CLASS_NAMES.has(className)) {
-      return { eligible: false, reason: 'blocked-class' }
-    }
-
-    if (LIKELY_GAME_CLASS_NAMES.has(className)) {
-      return { eligible: false, reason: 'likely-game-class' }
-    }
+    const className = eligibility.className || getClassName(funcs, geometryHwnd) || getClassName(funcs, rootHwnd)
 
     const windowRectBuffer = { left: 0, top: 0, right: 0, bottom: 0 }
     if (!funcs.GetWindowRect(geometryHwnd, windowRectBuffer) && !funcs.GetWindowRect(rootHwnd, windowRectBuffer)) {
@@ -250,11 +301,6 @@ function createWindowTracker(options = {}) {
 
     if (isFullscreenWindow(windowRectBuffer)) {
       return { eligible: false, reason: 'fullscreen-window' }
-    }
-
-    const cloaked = readDword(funcs, geometryHwnd, DWMWA_CLOAKED)
-    if (cloaked && cloaked !== 0) {
-      return { eligible: false, reason: 'cloaked-window' }
     }
 
     const rawCaptionButtonsRect = readRect(funcs, RECT, geometryHwnd, DWMWA_CAPTION_BUTTON_BOUNDS)

@@ -1,0 +1,20 @@
+{
+  "name": "startup-addon",
+  "version": "1.0.0",
+  "description": "Windows.ApplicationModel.StartupTask bridge for the MSIX build",
+  "main": "startup-wrapper.js",
+  "scripts": {
+    "build": "node-gyp rebuild",
+    "clean": "node-gyp clean"
+  },
+  "keywords": ["windows", "native", "addon", "startup", "msix"],
+  "author": "SnapAway",
+  "license": "MIT",
+  "dependencies": {
+    "node-addon-api": "^7.0.0"
+  },
+  "devDependencies": {
+    "node-gyp": "^10.0.0"
+  },
+  "gypfile": true
+}

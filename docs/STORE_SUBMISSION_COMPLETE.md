@@ -23,7 +23,7 @@ All technical preparation for Microsoft Store submission is complete!
    - Troubleshooting guide
 
 4. **Scripts**
-   - Build APPX: `node scripts/build-appx.js`
+   - Build APPX: `npm run appx` (signed: `npm run dist:appx`)
    - Validate: `node scripts/validate-store-compliance.js`
    - Prepare: `node scripts/prepare-submission.js`
    - Monitor: `node scripts/post-submission-guide.js`

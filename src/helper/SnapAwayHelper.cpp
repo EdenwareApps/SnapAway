@@ -41,16 +41,81 @@ static std::wstring Utf8ToUtf16(const std::string &str) {
     return wstrTo;
 }
 
+static std::string JsonUnescape(const std::string &s) {
+    // O payload é JSON: caminhos chegam como "C:\\Users\\..." e precisam voltar a
+    // "C:\Users\..." antes de irem para o registro, senão o valor gravado não é igual
+    // ao que getLoginItemSettings espera encontrar.
+    std::string out;
+    out.reserve(s.size());
+    for (size_t i = 0; i < s.size(); ++i) {
+        if (s[i] != '\\' || i + 1 >= s.size()) {
+            out += s[i];
+            continue;
+        }
+        char c = s[++i];
+        switch (c) {
+            case 'n': out += '\n'; break;
+            case 'r': out += '\r'; break;
+            case 't': out += '\t'; break;
+            case 'b': out += '\b'; break;
+            case 'f': out += '\f'; break;
+            case 'u': {
+                unsigned code = 0;
+                bool ok = (i + 4 < s.size());
+                for (int k = 1; ok && k <= 4; ++k) {
+                    char h = s[i + k];
+                    code <<= 4;
+                    if (h >= '0' && h <= '9') code |= (unsigned)(h - '0');
+                    else if (h >= 'a' && h <= 'f') code |= (unsigned)(h - 'a' + 10);
+                    else if (h >= 'A' && h <= 'F') code |= (unsigned)(h - 'A' + 10);
+                    else ok = false;
+                }
+                if (ok) {
+                    i += 4;
+                    if (code < 0x80) {
+                        out += (char)code;
+                    } else if (code < 0x800) {
+                        out += (char)(0xC0 | (code >> 6));
+                        out += (char)(0x80 | (code & 0x3F));
+                    } else {
+                        out += (char)(0xE0 | (code >> 12));
+                        out += (char)(0x80 | ((code >> 6) & 0x3F));
+                        out += (char)(0x80 | (code & 0x3F));
+                    }
+                }
+                break;
+            }
+            default: out += c; break; // \\, \" e \/ chegam aqui
+        }
+    }
+    return out;
+}
+
 static std::string GetArgValue(const std::string &payload, const std::string &key) {
     auto pos = payload.find("\"" + key + "\"");
     if (pos == std::string::npos) return "";
-    auto colon = payload.find(':', pos);
+    auto colon = payload.find(':', pos + key.size() + 2);
     if (colon == std::string::npos) return "";
     auto quote1 = payload.find('"', colon);
     if (quote1 == std::string::npos) return "";
-    auto quote2 = payload.find('"', quote1 + 1);
-    if (quote2 == std::string::npos) return "";
-    return payload.substr(quote1 + 1, quote2 - quote1 - 1);
+    std::string raw;
+    bool escaped = false;
+    for (size_t i = quote1 + 1; i < payload.size(); ++i) {
+        char c = payload[i];
+        if (escaped) {
+            raw += '\\';
+            raw += c;
+            escaped = false;
+            continue;
+        }
+        if (c == '\\') {
+            escaped = true;
+            continue;
+        }
+        if (c == '"') break;
+        raw += c;
+    }
+    return JsonUnescape(raw);
 }
 
 static std::vector<std::string> SplitComma(const std::string &s) {
@@ -286,7 +351,10 @@ static int DispatchAction(const std::string &jsonText, const std::wstring &resul
         std::string args = GetArgValue(jsonText, "args");
         std::string name = GetArgValue(jsonText, "name");
         if (name.empty()) {
-            name = "SnapAway";
+            // Electron names the Run value after the Application User Model ID, and its
+            // getLoginItemSettings reads only that entry: any other name here would
+            // write a second value the app cannot see.
+            name = "Edenware.app.Snapcover";
         }
         if (enableStr.empty() || exePath.empty()) {
             WriteResult(targetFile, resultError("INVALID_ARGS", "enable e exePath são necessários"));
@@ -294,8 +362,10 @@ static int DispatchAction(const std::string &jsonText, const std::wstring &resul
         }
 
         HKEY hKey;
-        LONG result = RegCreateKeyExA(HKEY_CURRENT_USER,
-            "Software\\Microsoft\\Windows\\CurrentVersion\\Run",
+        // Wide variants: o valor é comparado byte a byte por
+        // getLoginItemSettings, e a API ANSI corromperia caminhos com acento.
+        LONG result = RegCreateKeyExW(HKEY_CURRENT_USER,
+            L"Software\\Microsoft\\Windows\\CurrentVersion\\Run",
             0,
             NULL,
             REG_OPTION_NON_VOLATILE,
@@ -309,12 +379,14 @@ static int DispatchAction(const std::string &jsonText, const std::wstring &resul
             return 1;
         }
 
+        std::wstring wname = Utf8ToUtf16(name);
+
         if (enableStr == "true" || enableStr == "1") {
-            std::string command = std::string("\"") + exePath + "\"";
+            std::wstring command = std::wstring(L"\"") + Utf8ToUtf16(exePath) + L"\"";
             if (!args.empty()) {
-                command += " " + args;
+                command += L" " + Utf8ToUtf16(args);
             }
-            result = RegSetValueExA(hKey, name.c_str(), 0, REG_SZ, reinterpret_cast<const BYTE*>(command.c_str()), static_cast<DWORD>(command.size() + 1));
+            result = RegSetValueExW(hKey, wname.c_str(), 0, REG_SZ, reinterpret_cast<const BYTE*>(command.c_str()), static_cast<DWORD>((command.size() + 1) * sizeof(wchar_t)));
             RegCloseKey(hKey);
             if (result != ERROR_SUCCESS) {
                 WriteResult(targetFile, resultError("REGISTRY_ERROR", "Falha ao gravar chave de inicialização"));
@@ -325,7 +397,7 @@ static int DispatchAction(const std::string &jsonText, const std::wstring &resul
         }
 
         // disable
-        result = RegDeleteValueA(hKey, name.c_str());
+        result = RegDeleteValueW(hKey, wname.c_str());
         RegCloseKey(hKey);
         if (result != ERROR_SUCCESS && result != ERROR_FILE_NOT_FOUND) {
             WriteResult(targetFile, resultError("REGISTRY_ERROR", "Falha ao remover chave de inicialização"));

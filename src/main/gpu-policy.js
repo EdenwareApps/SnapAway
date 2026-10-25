@@ -6,12 +6,19 @@ const path = require('path');
 // Em algumas máquinas (drivers de vídeo instáveis / janelas transparentes +
 // always-on-top), o processo GPU do Chromium cai repetidamente (Sentry
 // ELECTRON-Y/S/8). O app não deve depender de variável manual para se
-// proteger: após `GPU_CRASH_THRESHOLD` crashes registrados, desligamos a
-// aceleração de hardware (persistido em gpu-fallback.json no userData). A
-// janela de recuperação re-tenta HW accel depois de alguns dias (o driver pode
-// ter sido atualizado).
+// proteger: após `GPU_CRASH_THRESHOLD` crashes registrados, desligamos a GPU
+// (persistido em gpu-fallback.json no userData). A janela de recuperação
+// re-tenta a aceleração depois de alguns dias (o driver pode ter sido
+// atualizado).
 const GPU_CRASH_THRESHOLD = 2;
 const FALLBACK_RECOVERY_MS = 7 * 24 * 60 * 60 * 1000; // 7 dias
+
+// `gpu-process-crashed` e `child-process-gone` (type 'GPU') descrevem o MESMO
+// crash e podem chegar em qualquer ordem — contar os dois dobraria o número e
+// desligaria a aceleração no primeiro crash. Crashes dentro desta janela (na
+// mesma sessão) contam como um só.
+const GPU_CRASH_DEDUPE_MS = 10 * 1000;
+let lastRecordedCrashAt = 0;
 
 const gpuPolicyFlags = {
   disableGpu: env.SNAPAWAY_DISABLE_GPU === '1',
@@ -69,27 +76,41 @@ function applyGpuFallback(app) {
     return false;
   }
 
-  console.warn('[GPU FALLBACK] Disabling hardware acceleration (repeated GPU crashes).');
+  console.warn('[GPU FALLBACK] Disabling GPU (repeated GPU crashes).');
   app.disableHardwareAcceleration();
   app.commandLine.appendSwitch('disable-gpu-compositing');
+  // `disableHardwareAcceleration()` sozinho ainda deixa o Chromium subir um
+  // processo GPU (SwiftShader). Em máquinas com driver quebrado esse processo
+  // segue caindo e o Chromium acaba abortando o browser inteiro ao atingir o
+  // próprio limite de crashes (`IntentionallyCrashBrowserForUnusableGpuProcess`
+  // — Sentry ELECTRON-K). O fallback precisa remover o processo GPU de vez.
+  app.commandLine.appendSwitch('disable-gpu');
   gpuPolicyFlags.disableGpu = true;
   gpuPolicyFlags.disableGpuCompositing = true;
+  gpuPolicyFlags.softwareRendering = true;
   return true;
 }
 
-// Chamado a cada gpu-process-crashed. Retorna true quando o app deve reiniciar
+// Chamado a cada crash real do processo GPU (de `gpu-process-crashed` OU de
+// `child-process-gone` type 'GPU'). Retorna true quando o app deve reiniciar
 // (acabou de cruzar o limiar e o fallback deve valer já na próxima sessão).
 function recordGpuCrash(app) {
   if (!app) return false;
+  const now = Date.now();
+  if (lastRecordedCrashAt && now - lastRecordedCrashAt < GPU_CRASH_DEDUPE_MS) {
+    return false;
+  }
+  lastRecordedCrashAt = now;
+
   const state = readFallbackState(app);
   state.crashCount = (state.crashCount || 0) + 1;
   let shouldRelaunch = false;
 
   if (!state.disabled && state.crashCount >= GPU_CRASH_THRESHOLD) {
     state.disabled = true;
-    state.disabledAt = Date.now();
+    state.disabledAt = now;
     shouldRelaunch = true;
-    console.warn(`[GPU FALLBACK] ${state.crashCount} GPU crashes recorded — hardware acceleration will be disabled.`);
+    console.warn(`[GPU FALLBACK] ${state.crashCount} GPU crashes recorded — GPU will be disabled.`);
   }
 
   writeFallbackState(app, state);

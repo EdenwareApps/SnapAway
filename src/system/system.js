@@ -1,6 +1,8 @@
 const path = require('path');
 const config = require('../config/config.js');
 const xsystem = require('../x-system/win32-support.js');
+const { evaluateWindowEligibility, isBlockedWindowClass, describeWindow, isWindowDiagnosticsEnabled } = require('../shared/window-eligibility');
+const { createTransitionTrace, markTransitionStep, markTransitionWindow, logTransitionTrace } = require('../shared/window-transition-trace');
 const { EventEmitter } = require('events');
 const { Worker } = require('worker_threads');
 const os = require('os');
@@ -90,6 +92,7 @@ const PROCESS_VM_READ = 0x0010;
 // 3. Constantes atualizadas
 const WindowConstants = {
 	GWL_STYLE: -16,
+	GWL_EXSTYLE: -20,
 	GW_OWNER: 4,
 	WS_CHILD: 0x40000000,
 	SW_HIDE: 0,
@@ -113,6 +116,30 @@ const iconExtractor = new IconExtractorWrapper();
 
 // Native process manager instance
 const processManager = new ProcessManagerWrapper();
+
+// Adapter for the shared window-eligibility decision (single source of truth).
+// `formatHwnd` is identity here because hwnds are already strings in this layer.
+const windowEligibilityApi = {
+	isWindow: (hwnd) => processManager.isWindow(hwnd),
+	getStyle: (hwnd) => processManager.getWindowLongPtr(hwnd, WindowConstants.GWL_STYLE),
+	getExStyle: (hwnd) => processManager.getWindowLongPtr(hwnd, WindowConstants.GWL_EXSTYLE),
+	getOwner: (hwnd) => processManager.getWindow(hwnd, WindowConstants.GW_OWNER),
+	getClassName: (hwnd) => processManager.getClassName(hwnd),
+	isVisible: (hwnd) => processManager.isWindowVisible(hwnd),
+	processIdOf: (hwnd) => {
+		const info = processManager.getWindowThreadProcessId(hwnd);
+		return info ? info.processId : 0;
+	},
+	getProcessName: (hwnd) => {
+		try {
+			const executable = getExecutableFromHwnd(hwnd);
+			return executable ? path.basename(executable) : '';
+		} catch (_) {
+			return '';
+		}
+	},
+	formatHwnd: (hwnd) => String(hwnd)
+};
 
 // Cache for processed executables to avoid repeated icon extraction
 const processedExecutables = new Set();
@@ -220,12 +247,12 @@ function isWindowManaged(hwndStr) {
 	return allFilters.some(filter => filter && filter.hwnd && filter.hwnd === hwndStr)
 }
 
-async function enableHideState(hwndStr) {
-	return hideSpecificWindow(hwndStr)
+async function enableHideState(hwndStr, trace = null) {
+	return hideSpecificWindow(hwndStr, trace)
 }
 
-async function enableHideStateForSelected() {
-	return hideWindows()
+async function enableHideStateForSelected(trace = null) {
+	return hideWindows(trace)
 }
 
 function hasManagedWindows() {
@@ -275,6 +302,13 @@ function addHiddenWindow(hwndStr) {
     }
 }
 
+// "O SnapAway ocultou esta janela?" — windows hidden by the app itself (tray
+// apps, self-hiding stubs) never enter this set, so they are never restored.
+// Hides from previous runs are covered by config.hiddenWindows (persisted).
+function wasHiddenByUs(hwndStr) {
+    return hiddenWindowsSet.has(hwndStr);
+}
+
 function removeHiddenWindow(hwndStr) {
     if (hiddenWindowsSet.has(hwndStr)) {
         hiddenWindowsSet.delete(hwndStr);
@@ -312,8 +346,17 @@ async function initializeAudio() {
 
 async function externalShowWindow(windows, show=false) {
 	console.log('!!! externalShowWindow', windows, show);
+	const isShow = show === true;
 	show = WindowConstants[show === true ? 'SW_SHOWNA' : 'SW_HIDE'];
-	const hungWindows = windows.filter(hwndStr => {
+	// Last gate before ShowWindow: never touch a window that is not a real
+	// target, so an auxiliary window can never be revealed (or hidden). When
+	// showing, a zero-area window is dropped too: there is nothing to present
+	// and it would appear as an empty, title-less frame.
+	const targets = windows.filter(hwndStr => {
+		if (!processManager.isWindow(hwndStr) || !isValidWindow(hwndStr)) return false;
+		return isShow ? !xsystem.isZeroAreaWindow(hwndStr) : true;
+	});
+	const hungWindows = targets.filter(hwndStr => {
 		if(processManager.isHungAppWindow(hwndStr)) return true;
 		processManager.showWindow(hwndStr, show);
 		return false;
@@ -387,31 +430,189 @@ function captureZOrderSnapshot() {
 
 function isValidWindow(hwndStr) {
 	try {
-		// Verificar estilo da janela
-		const style = Number(processManager.getWindowLongPtr(hwndStr, WindowConstants.GWL_STYLE));
-		if (style & WindowConstants.WS_CHILD) return false;
-
-		// Verificar janela proprietária
-		if (processManager.getWindow(hwndStr, WindowConstants.GW_OWNER)) return false;
-
-		// Verificar classe da janela
-		const className = processManager.getClassName(hwndStr);
-
-		const blockedClasses = new Set([
-			'Windows.Internal.Shell.TabProxyWindow',
-			'Windows.UI.Core.CoreWindow',            // Janelas UWP
-			'Intermediate D3D Window',               // Janelas gráficas
-			'Shell_TrayWnd',                         // Barra de tarefas
-			'Shell_SecondaryTrayWnd'                 // Barra de tarefas secundária
-		]);
-		return !blockedClasses.has(className);
+		// Eligibility only (structure + documented class exceptions). Visibility
+		// is a separate STATE: a window hidden by SnapAway is still eligible and
+		// must stay in the list so it can be restored.
+		return evaluateWindowEligibility(windowEligibilityApi, hwndStr).eligible;
 	} catch (error) {
 		console.error('Window validation error:', error);
 		return false;
 	}
 }
 
-function isFilteredWindow(hwndStr) {
+// A window can only be shown again when it is both a real target and something
+// the user could actually see. Zero-area helpers (message-only stubs, IME
+// listeners) have nothing to present: SW_SHOWNA on them maps an empty frame
+// that was never on screen — the "ghost window" bug reported with Spotify.
+function isRestorableWindow(hwndStr) {
+	if (!processManager.isWindow(hwndStr)) return false;
+	if (!isValidWindow(hwndStr)) return false;
+	if (xsystem.isZeroAreaWindow(hwndStr)) return false;
+	return true;
+}
+
+// Counts, per executable (lowercased path), how many valid top-level windows
+// currently exist. This is what lets us treat single-window processes as
+// "identity == process": when an app owns exactly one window, the filter can be
+// re-bound to that window after a restart or a title change.
+//
+// Accepts an already-enumerated window list (each item needing at least `hwnd`,
+// optionally `executable`) to avoid enumerating twice; when omitted it
+// enumerates windows itself. Executables are resolved once per PID.
+function buildExecutableWindowCounts(windows) {
+	const counts = new Map();
+	const executableByPid = new Map();
+	const source = Array.isArray(windows) ? windows : processManager.enumWindows();
+
+	for (const window of source) {
+		const hwndStr = window && window.hwnd;
+		if (!hwndStr) continue;
+		if (!isValidWindow(hwndStr)) continue;
+
+		let executable = window.executable || '';
+		if (!executable) {
+			try {
+				const info = processManager.getWindowThreadProcessId(hwndStr);
+				const pid = info ? info.processId : 0;
+				if (pid) {
+					if (executableByPid.has(pid)) {
+						executable = executableByPid.get(pid);
+					} else {
+						executable = processManager.getExecutablePath(pid) || '';
+						executableByPid.set(pid, executable);
+					}
+				}
+			} catch (error) {
+				executable = '';
+			}
+		}
+
+		if (executable) {
+			const key = String(executable).toLowerCase();
+			// list() output already carries the authoritative per-executable
+			// count; reuse it so iterateWindows() (which runs over list() output)
+			// does not undercount windows that list() intentionally omitted.
+			const known = Number(window.windowCount);
+			if (Number.isFinite(known) && known > 0) {
+				counts.set(key, Math.max(counts.get(key) || 0, known));
+			} else {
+				counts.set(key, (counts.get(key) || 0) + 1);
+			}
+		}
+	}
+
+	return counts;
+}
+
+// Single shared matcher used by list()/isFilteredWindow() and iterateWindows()
+// so every lookup path applies the exact same precedence:
+//
+//   1. overlay-hwnd filters stay bound to their session HWND.
+//   2. A stored HWND that is still the same window AND belongs to the same
+//      executable matches. Checking the executable (not only the HWND) protects
+//      against Windows recycling a destroyed HWND for an unrelated window.
+//   3. Single-window processes: window identity == process identity, so the
+//      window can be re-resolved by executable after a restart or a title
+//      change. filter.hwnd is refreshed by syncFilterWithWindow().
+//   4. Fallback: the original type-based comparison (title/process/className).
+function matchesFilter(win, filter, windowCounts) {
+	if (!filter || !win) return false;
+
+	// Overlay filters are always bound to a single, session-scoped HWND.
+	if (filter.type === 'overlay-hwnd') {
+		return !!filter.hwnd && win.hwnd === filter.hwnd;
+	}
+
+	// Auxiliary windows that a filter process owns (IME/"Default IME",
+	// "GDI+ Hook Window Class", "DDE Server Window", crashpad watchers...) are
+	// never targets. They are structurally rejected (child/owned/blocked class)
+	// and must not match even when a filter still stores their HWND: a legacy
+	// binding like that makes the show path call SW_SHOWNA on a window the user
+	// never had visible.
+	if (!isValidWindow(win.hwnd)) {
+		return false;
+	}
+
+	const execKey = filter.executable ? String(filter.executable).toLowerCase() : '';
+	const winExecKey = win.executable ? String(win.executable).toLowerCase() : '';
+	const execMatch = !!execKey && !!winExecKey && execKey === winExecKey;
+	const processMatch = !execMatch && !!filter.process && !!win.process &&
+		String(filter.process).toLowerCase() === String(win.process).toLowerCase();
+	const identityMatch = execMatch || processMatch;
+
+	// The live window must be the same KIND as the filtered one. An empty
+	// className on the filter (e.g. elevated windows where GetClassName fails)
+	// means "no constraint", so recovery keeps working where the class is
+	// unreadable; when the filter does carry a class it must match exactly.
+	const classMatch = !filter.className || filter.className === win.className;
+
+	// 2) Stored HWND still alive and owned by the same executable.
+	if (filter.hwnd && win.hwnd === filter.hwnd && identityMatch) {
+		return true;
+	}
+
+	// 2b) Identity could not be resolved at all (e.g. a system window whose
+	// process handle is inaccessible). Fall back to a pure HWND match so
+	// explicitly-bound filters keep working instead of silently dropping.
+	if (filter.hwnd && win.hwnd === filter.hwnd && win.unknownIdentity) {
+		return true;
+	}
+
+	// 3) Recover the HWND for single-window processes. Requires the same
+	// executable AND the same window class (when known) as the filtered window.
+	if (execMatch && classMatch && windowCounts && windowCounts.get(execKey) === 1) {
+		return true;
+	}
+
+	// 4) Type-based fallback.
+	const insensitive = !!filter.insensitive;
+	const compare = (a = '', b = '') => insensitive
+		? String(a).toLowerCase().includes(String(b).toLowerCase())
+		: String(a).includes(String(b));
+
+	switch (filter.type) {
+		case 'title':
+			if (!win.title) return false;
+			if (compare(win.title, filter.value)) return true;
+			// Learned title tokens (drifted titles) are additive: they only ever
+			// widen the match, never gate it.
+			return Array.isArray(filter.tokens) && filter.tokens.some(token => token && compare(win.title, token));
+		case 'process':
+			return !!win.process && compare(win.process, filter.value);
+		case 'className':
+			return !!win.className && compare(win.className, filter.value);
+		default:
+			return false;
+	}
+}
+
+// Keeps a persisted filter in sync with the live window it matched. Refreshing
+// the stored HWND/title is what makes the single-window recovery durable across
+// process restarts and dynamic title changes. Only touches in-memory config
+// (nested mutations must not trigger disk writes on every list() call).
+function syncFilterWithWindow(filter, win) {
+	if (!filter || !win || filter.type === 'overlay-hwnd') return;
+	// Never re-bind a filter to a non-target window: the last enumerated
+	// matching window used to win, so a process filter could end up pointing at
+	// an auxiliary window (Default IME) instead of the app window.
+	if (!win.hwnd || !isValidWindow(win.hwnd)) return;
+	if (!Array.isArray(config.filters)) return;
+
+	const index = config.filters.indexOf(filter);
+	if (index === -1) return;
+
+	const stored = config.filters[index];
+
+	if (win.hwnd && stored.hwnd !== win.hwnd) {
+		stored.hwnd = win.hwnd;
+	}
+
+	if (stored.type === 'title' && win.title && stored.title !== win.title) {
+		stored.title = win.title;
+	}
+}
+
+function isFilteredWindow(hwndStr, windowCounts) {
 	// A window is considered "filtered" if it matches any filter, not just when
 	// a filter explicitly stores the HWND. This is important so that hidden
 	// windows remain included in the process list and can be restored later.
@@ -423,37 +624,13 @@ function isFilteredWindow(hwndStr) {
 		const process = executable ? path.basename(executable) : '';
 		const title = processManager.getWindowText(hwndStr) || '';
 		const className = processManager.getClassName(hwndStr) || '';
-		windowData = { hwnd: hwndStr, process, title, className };
+		windowData = { hwnd: hwndStr, process, title, className, executable };
 	} catch (error) {
 		// If we can't obtain window details, fallback to only matching by HWND
-		windowData = { hwnd: hwndStr, process: '', title: '', className: '' };
+		windowData = { hwnd: hwndStr, process: '', title: '', className: '', executable: '', unknownIdentity: true };
 	}
 
-	return getAllSelectionFilters().some(filter => {
-		if (filter.hwnd && hwndStr === filter.hwnd) {
-			return true;
-		}
-
-		const compare = (a = '', b = '') => {
-			if (filter.insensitive) {
-				return a.toLowerCase().includes(b.toLowerCase());
-			}
-			return a.includes(b);
-		};
-
-		switch (filter.type) {
-			case 'overlay-hwnd':
-				return hwndStr === filter.hwnd
-			case 'title':
-				return windowData.title && compare(windowData.title, filter.value);
-			case 'process':
-				return windowData.process && compare(windowData.process, filter.value);
-			case 'className':
-				return windowData.className && compare(windowData.className, filter.value);
-			default:
-				return false;
-		}
-	});
+	return getAllSelectionFilters().some(filter => matchesFilter(windowData, filter, windowCounts));
 }
 
 function isWindowHidden(hwndStr) {
@@ -469,7 +646,11 @@ function cleanupOrphanedHiddenWindows() {
 	
 	const validHiddenWindows = [];
 	config.hiddenWindows.forEach(hwndStr => {
-		if (processManager.isWindow(hwndStr)) {
+		// A tracked window must still exist AND still be a real, restorable
+		// target: legacy entries pointing at auxiliary windows (IME/DDE/GDI+)
+		// or zero-area stubs are dropped here so they can never be "restored"
+		// on the next show.
+		if (isRestorableWindow(hwndStr)) {
 			validHiddenWindows.push(hwndStr);
 		} else {
 			console.log('[SYSTEM] Removing orphaned hidden window:', hwndStr);
@@ -484,20 +665,50 @@ function cleanupOrphanedHiddenWindows() {
 	}
 }
 
+// Opt-in diagnostic (SNAPAWAY_WINDOW_DIAG=1): dump the eligibility decision for
+// every enumerated top-level window, deduped by signature so it only logs when
+// the window landscape changes. Meant to build a real test matrix instead of
+// guessing classes in advance.
+let lastEligibilityDumpSignature = '';
+function maybeDumpWindowEligibility(windows) {
+	if (!isWindowDiagnosticsEnabled()) return;
+	try {
+		const rows = [];
+		for (const window of windows) {
+			const hwndStr = window && window.hwnd;
+			if (!hwndStr) continue;
+			rows.push(describeWindow(windowEligibilityApi, hwndStr));
+		}
+		const signature = rows.map(row => `${row.hwnd}|${row.className}|${row.code}`).sort().join(',');
+		if (signature === lastEligibilityDumpSignature) return;
+		lastEligibilityDumpSignature = signature;
+		console.log('[WINDOW-DIAG] enumerate', JSON.stringify(rows));
+	} catch (error) {
+		console.warn('[WINDOW-DIAG] dump failed:', error && error.message ? error.message : error);
+	}
+}
+
 async function list(serializable = false, skipHiddenWindows = false) {
 	const processes = [];
 	const executables = [];
 	
 	// Use native process manager to enumerate windows
 	const windows = processManager.enumWindows();
-	
+
+	// Opt-in diagnostics for building a real eligibility test matrix.
+	maybeDumpWindowEligibility(windows);
+
+	// Count valid top-level windows per executable once per list run so the
+	// shared matcher can treat single-window processes as process-identified.
+	const windowCounts = buildExecutableWindowCounts(windows);
+
 	for (const window of windows) {
 		const hwndStr = window.hwnd;
 		
-		if (isValidWindow(hwndStr) || isFilteredWindow(hwndStr)) {
+		if (isValidWindow(hwndStr) || isFilteredWindow(hwndStr, windowCounts)) {
 			// Sempre incluir janelas filtradas, mesmo quando estão ocultas
 			// Isso permite que o app restaure janelas ocultas corretamente
-			if (skipHiddenWindows && isWindowHidden(hwndStr) && !isFilteredWindow(hwndStr)) {
+			if (skipHiddenWindows && isWindowHidden(hwndStr) && !isFilteredWindow(hwndStr, windowCounts)) {
 				continue;
 			}
 
@@ -524,6 +735,9 @@ async function list(serializable = false, skipHiddenWindows = false) {
 				title,
 				className,
 				executable,
+				// Authoritative count of valid top-level windows for this
+				// executable, used by the renderer matcher for HWND recovery.
+				windowCount: windowCounts.get(String(executable).toLowerCase()) || 1,
 				icon: iconUrl
 			});
 		}
@@ -600,54 +814,23 @@ function getExecutableFromHwnd(hwndStr) {
 
 async function iterateWindows(callback, hwndOnly = false, skipHiddenWindows = false) {
 	const windows = await list(false, skipHiddenWindows);
+	// Reuse the executables already resolved by list() to build the per-process
+	// window counts without enumerating or opening processes again.
+	const windowCounts = buildExecutableWindowCounts(windows);
 	windows.forEach(win => {
 		const hwndStr = win.hwnd; // Already a string
 		getAllSelectionFilters().some(filter => {
 			if (hwndOnly && hwndStr != filter.hwnd) {
 				return false;
 			}
-			const directMatch = filter.hwnd && hwndStr == filter.hwnd && win.process == filter.process;
-			if (directMatch) {
-				if (filter.type == 'title' && win.title != filter.title) {
-					const index = config.filters.indexOf(filter);
-					config.filters[index].title = filter.title = win.title || win.process;
-				}
-				callback(win);
-				return true;
+			if (!matchesFilter(win, filter, windowCounts)) {
+				return false;
 			}
-			const compare = (a, b) => {
-				if (filter.insensitive) {
-					return a.toLowerCase().includes(b.toLowerCase());
-				}
-				return a.includes(b);
-			}
-			switch (filter.type) {
-				case 'overlay-hwnd':
-					if (hwndStr === filter.hwnd) {
-						callback(win)
-						return true
-					}
-					break
-				case 'title':
-					if (win.title && compare(win.title, filter.value)) {
-						callback(win);
-						return true;
-					}
-					break;
-				case 'className':
-					if (win.className && compare(win.className, filter.value)) {
-						callback(win);
-						return true;
-					}
-					break;
-				case 'process':
-					if (win.process && compare(win.process, filter.value)) {
-						callback(win);
-						return true;
-					}
-					break;
-			}
-			return false;
+			// Keep the persisted filter bound to the live window so the HWND
+			// recovery survives process restarts and dynamic title changes.
+			syncFilterWithWindow(filter, win);
+			callback(win);
+			return true;
 		});
 	});
 }
@@ -667,18 +850,87 @@ async function initializeAudio() {
 	}
 }
 
-async function cleanupAudio() {
-	try {
-		// Cleanup native audio controller
-		await nativeAudioController.cleanup();
-		console.log('[AUDIO] Audio cleanup completed');
-		
-		// Cleanup native icon extractor
-		iconExtractor.cleanup();
-		// console.log('[ICON-ADDON] Icon extractor cleanup completed');
-	} catch (error) {
-		console.error('[AUDIO] Error cleaning up audio:', error);
-	}
+// O cleanup nativo é SÍNCRONO por dentro (COM: Release + CoUninitialize em
+// audio-addon.cpp) e pode pendurar a thread principal quando o serviço de áudio
+// está lento (Bluetooth/HDMI reconectando, endpoint removido no meio do
+// encerramento) — é um dos candidatos a HANG_QUIESCE / ENDTASK_HungThreadIsIdle.
+// Como ele fica no caminho de quit, aqui ele é "best effort" e com orçamento:
+//   - idempotente: executa no máximo uma vez por processo (chamadas repetidas
+//     reaproveitam a mesma promise, sem repetir o teardown COM);
+//   - nunca rejeita: o encerramento não pode falhar por causa dele;
+//   - com timeout: quem chama recebe o controle em no máximo `timeoutMs`;
+//   - instrumentado: mede a duração e expõe em getAudioCleanupStats();
+//   - escape hatch: SNAPAWAY_SKIP_AUDIO_CLEANUP=1 (ou skipNative=true) pula o
+//     teardown nativo — o processo está saindo e o SO libera os recursos.
+const AUDIO_CLEANUP_TIMEOUT_MS = 1000;
+const SKIP_NATIVE_AUDIO_CLEANUP = process.env.SNAPAWAY_SKIP_AUDIO_CLEANUP === '1';
+let audioCleanupPromise = null;
+let audioCleanupStats = { started: false, completed: false, timedOut: false, durationMs: 0, reason: null };
+
+function cleanupAudio({ timeoutMs = AUDIO_CLEANUP_TIMEOUT_MS, reason = 'unspecified', skipNative = SKIP_NATIVE_AUDIO_CLEANUP } = {}) {
+	// Uma única execução por processo: window-all-closed, before-quit e
+	// session-end podem chamar sem risco de repetir o teardown nativo.
+	if (audioCleanupPromise) return audioCleanupPromise;
+
+	audioCleanupStats = { started: true, completed: false, timedOut: false, durationMs: 0, reason };
+	const startedAt = Date.now();
+
+	// Orçamento armado ANTES do trabalho nativo: mesmo que a chamada nativa nunca
+	// retorne (refactor futuro/async), o caller é liberado dentro do timeout.
+	// O timer é unref() para nunca manter o processo vivo por causa dele.
+	let budgetTimer = null;
+	const budget = new Promise(resolve => {
+		budgetTimer = setTimeout(() => resolve(false), timeoutMs);
+		if (budgetTimer && typeof budgetTimer.unref === 'function') budgetTimer.unref();
+	});
+
+	const nativeCleanup = (async () => {
+		if (skipNative) {
+			console.log(`[AUDIO] cleanup nativo ignorado (skipNative=true, reason=${reason})`);
+			return true;
+		}
+		try {
+			// Cleanup native audio controller (síncrono por dentro)
+			await nativeAudioController.cleanup();
+		} catch (error) {
+			console.error('[AUDIO] Error cleaning up native audio controller:', error);
+		}
+		try {
+			// Cleanup native icon extractor
+			iconExtractor.cleanup();
+		} catch (error) {
+			console.error('[ICON-ADDON] Error cleaning up icon extractor:', error);
+		}
+		return true;
+	})();
+
+	audioCleanupPromise = Promise.race([nativeCleanup, budget])
+		.then(() => {
+			if (budgetTimer) clearTimeout(budgetTimer);
+			const durationMs = Date.now() - startedAt;
+			// A duração é o único sinal confiável: um bloqueio síncrono não pode ser
+			// interrompido pelo timer (a thread só volta quando o COM retorna).
+			const timedOut = durationMs > timeoutMs;
+			audioCleanupStats = { started: true, completed: !timedOut, timedOut, durationMs, reason, skipped: skipNative };
+			if (timedOut) {
+				console.warn(`[AUDIO] cleanup levou ${durationMs}ms (> ${timeoutMs}ms, reason=${reason}) — possível travamento no encerramento`);
+			} else {
+				console.log(`[AUDIO] Audio cleanup completed em ${durationMs}ms (reason=${reason})`);
+			}
+			return audioCleanupStats;
+		})
+		.catch(error => {
+			// Nunca propaga: o encerramento não pode depender deste caminho.
+			console.error('[AUDIO] Error cleaning up audio:', error);
+			audioCleanupStats = { ...audioCleanupStats, completed: false };
+			return audioCleanupStats;
+		});
+
+	return audioCleanupPromise;
+}
+
+function getAudioCleanupStats() {
+	return { ...audioCleanupStats };
 }
 
 async function muteWindowAudio(hwndStr) {
@@ -763,10 +1015,14 @@ async function unmuteWindowAudio(hwndStr) {
 
 
 
-async function hideWindows() {
+async function hideWindows(trace = null) {
+	const ownsTrace = !trace;
+	if (ownsTrace) trace = createTransitionTrace('hide', 'system');
+
 	const queue = [], hidden = [], elevated = [];
 	const mutedPids = new Set(); // dedup: mutar 1x por processo, não por janela
 	const zOrderSnapshot = captureZOrderSnapshot();
+	markTransitionStep(trace, 'snapshot');
 	await iterateWindows(async (win) => {
 		const processInfo = processManager.getWindowThreadProcessId(win.hwnd);
 		console.log(`[AUDIO] Processing window: ${win.process} (HWND: ${win.hwnd}, PID: ${processInfo ? processInfo.processId : 'unknown'})`);
@@ -774,21 +1030,23 @@ async function hideWindows() {
 		// Não ocultar janelas da barra de tarefas ou outras classes de sistema
 		// mesmo quando o processo (ex: explorer.exe) estiver nos filtros.
 		const className = win.className || processManager.getClassName(win.hwnd) || '';
-		const blockedClassesForHide = new Set([
-			'Shell_TrayWnd',
-			'Shell_SecondaryTrayWnd',
-			'Windows.Internal.Shell.TabProxyWindow',
-			'Windows.UI.Core.CoreWindow',
-			'Intermediate D3D Window'
-		]);
-		if (blockedClassesForHide.has(className)) {
+		if (isBlockedWindowClass(className)) {
 			console.log(`[SYSTEM] Skipping hide for system window: ${win.hwnd} class: ${className}`);
+			markTransitionWindow(trace, win.hwnd, win.process, 'skipped-system-class');
+			return;
+		}
+		// Janelas sem área (helpers IME/listener, stubs invisíveis) não têm nada a
+		// ocultar: ocultá-las só polui o rastreamento e o badge de notificação.
+		if (xsystem.isZeroAreaWindow(win.hwnd)) {
+			console.log(`[SYSTEM] Skipping hide for zero-area window: ${win.hwnd} class: ${className}`);
+			markTransitionWindow(trace, win.hwnd, win.process, 'skipped-zero-area');
 			return;
 		}
 		if (!isWindowHidden(win.hwnd)) {
 			hiddenWindowZOrder.set(win.hwnd, zOrderSnapshot.get(win.hwnd) ?? Number.MAX_SAFE_INTEGER);
 			if (processManager.isHungAppWindow(win.hwnd)) {
 				queue.push(win.hwnd);
+				markTransitionWindow(trace, win.hwnd, win.process, 'queued-hung');
 			} else {
 				processManager.showWindow(win.hwnd, WindowConstants.SW_HIDE);
 				// Diagnóstico (fix 1.1.2): se a janela continuar visível após
@@ -799,10 +1057,12 @@ async function hideWindows() {
 					console.warn(`[SYSTEM] Window ${win.hwnd} (${win.process}) still visible after SW_HIDE — likely elevated process; reporting for elevated hide`);
 					hiddenWindowZOrder.delete(win.hwnd);
 					elevated.push(win.hwnd);
+					markTransitionWindow(trace, win.hwnd, win.process, 'elevated-pending');
 					return;
 				}
 				hidden.push(win.hwnd);
 				addHiddenWindow(win.hwnd); // Track hidden window for notification badge
+				markTransitionWindow(trace, win.hwnd, win.process, 'hidden');
 				if (config.muteWindows) {
 					const processId = processInfo ? processInfo.processId : 0;
 					// Só muta UMA vez por processo (muitas janelas do mesmo PID,
@@ -820,26 +1080,46 @@ async function hideWindows() {
 					});
 				}
 			}
+		} else {
+			markTransitionWindow(trace, win.hwnd, win.process, 'already-hidden');
 		}
 	}, false, true);
+	markTransitionStep(trace, 'sw-hide-done');
 	const ret = await externalShowWindow(queue, false);
+	markTransitionStep(trace, 'hung-queue-done');
 	// Preserve any previously hidden windows so we don't "forget" them if hideWindows runs multiple times
 	const previousHidden = Array.isArray(config.hiddenWindows) ? config.hiddenWindows : [];
 	config.hiddenWindows = [...new Set([...previousHidden, ...queue, ...hidden])];
 	console.log(`[SYSTEM] hideWindows: hidden=${hidden.length} elevated=${elevated.length} queue=${queue.length} config.hiddenWindows=${config.hiddenWindows.length}`);
+	markTransitionStep(trace, 'bookkeeping-done');
+	if (ownsTrace) logTransitionTrace(trace);
 	// Janelas que não puderam ser ocultadas (processo elevado) são retornadas
 	// para o main process tentar via helper elevado (fix 1.1.2).
-	return { elevated };
+	return { elevated, trace };
 }
 
-async function hideSpecificWindow(hwndStr) {
+async function hideSpecificWindow(hwndStr, trace = null) {
 	console.log(`[SYSTEM] Hiding specific window with HWND: ${hwndStr}`);
+	if (!isValidWindow(hwndStr)) {
+		// Auxiliary windows (IME/DDE/GDI+/owned helpers) are not targets: hiding
+		// or tracking them would later make the restore path show them.
+		console.warn(`[SYSTEM] Refusing to hide non-target window ${hwndStr}`);
+		markTransitionWindow(trace, hwndStr, '', 'skipped-non-target');
+		return { success: false, message: 'Window is not a hideable target', code: 'WINDOW_NOT_TARGET' };
+	}
+	if (xsystem.isZeroAreaWindow(hwndStr)) {
+		// Nothing to hide and nothing the user could ever have seen.
+		console.warn(`[SYSTEM] Refusing to hide zero-area window ${hwndStr}`);
+		markTransitionWindow(trace, hwndStr, '', 'skipped-zero-area');
+		return { success: false, message: 'Window has no visible area', code: 'WINDOW_ZERO_AREA' };
+	}
 	const zOrderSnapshot = captureZOrderSnapshot();
 	hiddenWindowZOrder.set(hwndStr, zOrderSnapshot.get(hwndStr) ?? Number.MAX_SAFE_INTEGER);
 	
 	if (!isWindowHidden(hwndStr)) {
 		if (processManager.isHungAppWindow(hwndStr)) {
 			console.log(`[SYSTEM] Window ${hwndStr} is hung, cannot hide`);
+			markTransitionWindow(trace, hwndStr, '', 'queued-hung');
 			return { success: false, message: 'Window is hung', code: 'WINDOW_HUNG' };
 		} else {
 			processManager.showWindow(hwndStr, WindowConstants.SW_HIDE);
@@ -848,6 +1128,7 @@ async function hideSpecificWindow(hwndStr) {
 			// após a chamada para detectar falhas (ex.: processo elevado).
 			if (processManager.isWindowVisible(hwndStr)) {
 				console.warn(`[SYSTEM] Window ${hwndStr} still visible after SW_HIDE — failed to hide`);
+				markTransitionWindow(trace, hwndStr, '', 'elevated-pending');
 				return {
 					success: false,
 					requiresElevation: true,
@@ -855,27 +1136,29 @@ async function hideSpecificWindow(hwndStr) {
 					message: 'Failed to hide target window. It may belong to an elevated process.'
 				};
 			}
-			
+
 			// Adicionar à lista de janelas ocultas se não estiver já
 			if (!config.hiddenWindows.includes(hwndStr)) {
 				config.hiddenWindows.push(hwndStr);
 			}
-			
+
 			// Track hidden window for notification badge
 			addHiddenWindow(hwndStr);
-			
+
 			// Mutar áudio se configurado
 			if (config.muteWindows) {
 				await muteWindowAudio(hwndStr).catch(error => {
 					console.error('[AUDIO] Error muting specific window audio:', error);
 				});
 			}
-			
+
 			console.log(`[SYSTEM] Successfully hid window ${hwndStr}`);
+			markTransitionWindow(trace, hwndStr, '', 'hidden');
 			return { success: true };
 		}
 	} else {
 		console.log(`[SYSTEM] Window ${hwndStr} is already hidden`);
+		markTransitionWindow(trace, hwndStr, '', 'already-hidden');
 		return { success: false, message: 'Window already hidden', code: 'ALREADY_HIDDEN' };
 	}
 }
@@ -913,6 +1196,12 @@ async function showSpecificWindow(hwndStr) {
 			console.log(`[SYSTEM] HWND ${hwndStr} is not a valid window`);
 			return false;
 		}
+		// Restoring must apply to real targets only (never IME/tray/helper
+		// windows), otherwise SW_SHOWNA reveals a window the user never saw.
+		if (!isRestorableWindow(hwndStr)) {
+			console.log(`[SYSTEM] HWND ${hwndStr} is not a restorable target window, refusing to show`);
+			return false;
+		}
 
 		processManager.showWindow(hwndStr, WindowConstants.SW_SHOWNA);
 
@@ -935,26 +1224,31 @@ async function showSpecificWindow(hwndStr) {
 	}
 }
 
-async function showWindows() {
+async function showWindows(trace = null) {
+	const ownsTrace = !trace;
+	if (ownsTrace) trace = createTransitionTrace('show', 'system');
 	console.log('[SYSTEM] showWindows entry: config.hiddenWindows =', JSON.stringify(config.hiddenWindows));
 	const queue = [];
 	config.hiddenWindows.forEach(hwndStr => {
-		if (processManager.isWindow(hwndStr)) {
+		// Only tracked windows that are still real targets: a stale entry must
+		// never resurrect an auxiliary/hidden-by-itself window.
+		if (isRestorableWindow(hwndStr)) {
 			queue.push(hwndStr);
 		} else {
-			console.log('Invalid hwnd', hwndStr);
+			console.log(`[SYSTEM] Dropping non-restorable hwnd from tracking: ${hwndStr}`);
 		}
 	});
 	config.hiddenWindows = [];
 	
-	// Sempre procurar por janelas ocultas, independentemente da configuração hideSystemWindows
-	// Isso garante que janelas filtradas sejam sempre restauradas.
-	// hwndOnly=true: restaura apenas janelas com filtro EXPLÍCITO por hwnd (as que
-	// o usuário selecionou/ocultou). Usar "todos os filtros" redescobria janelas
-	// auxiliares invisíveis do WMP (Default IME, DDE Server Window, etc.) e as
-	// mostrava na taskbar após o show (fix 1.1.2 reverteu para hwndOnly).
+	// Passe de recuperação: só devolve à tela o que o SnapAway ocultou.
+	// config.hiddenWindows (acima) cobre o que foi ocultado em sessões
+	// anteriores, persistido em disco; aqui cobrimos o que foi ocultado nesta
+	// sessão, inclusive via helper elevado (markElevatedHidden).
+	// hwndOnly=true: considera apenas janelas com filtro EXPLÍCITO por hwnd.
+	// Qualquer janela oculta que o SnapAway não ocultou (app escondido na
+	// bandeja, auxiliar do sistema) permanece exatamente como está.
 	await iterateWindows(win => {
-		if (isWindowHidden(win.hwnd)) {
+		if (wasHiddenByUs(win.hwnd) && isWindowHidden(win.hwnd) && isRestorableWindow(win.hwnd)) {
 			queue.push(win.hwnd);
 		}
 	}, true, false);
@@ -976,6 +1270,7 @@ async function showWindows() {
 	}
 
 	await externalShowWindow(dedupedQueue, true);
+	markTransitionStep(trace, 'sw-show-done');
 	dedupedQueue.forEach(hwndStr => hiddenWindowZOrder.delete(hwndStr));
 
 	// Janelas que continuam ocultas após SW_SHOWNA (processo elevado) não podem
@@ -984,6 +1279,10 @@ async function showWindows() {
 	const stillHidden = dedupedQueue.filter(hwndStr => {
 		return processManager.isWindow(hwndStr) && !processManager.isWindowVisible(hwndStr);
 	});
+	const stillHiddenSet = new Set(stillHidden);
+	for (const hwndStr of dedupedQueue) {
+		markTransitionWindow(trace, hwndStr, '', stillHiddenSet.has(hwndStr) ? 'still-hidden' : 'shown');
+	}
 
 	// Clear all hidden windows tracking quando mostrar todas as janelas
 	clearHiddenWindows();
@@ -1001,6 +1300,8 @@ async function showWindows() {
 	// Cleanup any stale hidden windows data after attempts to show windows
 	cleanupOrphanedHiddenWindows();
 
+	markTransitionStep(trace, 'bookkeeping-done');
+	if (ownsTrace) logTransitionTrace(trace);
 	return { hadHidden: hasHiddenWindows, stillHidden };
 }
 
@@ -1134,6 +1435,7 @@ module.exports = {
 	initializeAudio,
 	initializeIconExtractor,
 	cleanupAudio,
+	getAudioCleanupStats,
 	muteWindowAudio,
 	unmuteWindowAudio,
 	hasActiveAudioSession,

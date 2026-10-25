@@ -16,6 +16,7 @@ function copyNativeModules() {
         ['src/icon-extractor/build/Release/icon_addon.node', 'src/icons/build/Release/icon_addon.node'],
         ['src/process/build/Release/process_addon.node'],
         ['src/windows/build/Release/windows_addon.node'],
+        ['src/startup/build/Release/startup_addon.node'],
         ['src/iap/build/Release/iap_addon.node']
       ];
 

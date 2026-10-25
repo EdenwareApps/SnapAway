@@ -45,5 +45,7 @@
     "hideUsageCount": 0,
     "reviewPromptLastOfferAt": 0,
     "reviewPromptAskedEver": false,
-    "reviewPromptDismissedForever": false
+    "reviewPromptDismissedForever": false,
+    "proUpsellUsageCount": 0,
+    "proUpsellUsageDays": []
   }

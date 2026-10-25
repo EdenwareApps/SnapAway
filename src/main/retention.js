@@ -14,7 +14,14 @@
  *  - retention.first_launch      : primeira execução do dispositivo
  *  - retention.return.d{1,2,3,7,14,30} : retorno no dia N (uma vez por dispositivo)
  *  - retention.first_hide        : primeiro uso real do recurso central (hide)
- *  - retention.pro_modal_viewed  : modal Pro exibido (vindo do renderer)
+ *  - retention.pro_modal_viewed  : modal Pro exibido (vindo do renderer;
+ *                                  `details.source` indica a origem)
+ *  - retention.pro_upsell_eligible: usuário atingiu o 2º uso real (marco do funil)
+ *  - retention.pro_upsell_modal_opened : faixa de upsell abriu o modal Pro
+ *                                  (evento próprio: o Partner Center só recebe
+ *                                  o nome do evento, não os details)
+ *  - retention.pro_upsell_clicked: clique no CTA da faixa de upsell
+ *  - retention.pro_upsell_dismissed : usuário dispensou a faixa (vale só na execução)
  *  - retention.purchase_started  : diálogo de compra da Store aberto
  *  - retention.purchase_completed: compra concluída na Store
  *  - retention.purchase_failed   : falha/erro no fluxo de compra da Store
@@ -25,6 +32,13 @@
  *  - retention.review_postponed  : usuário escolheu "agora não"
  *  - retention.review_dismissed_forever : usuário pediu para nunca mais perguntar
  *  - retention.review_failed     : falha ao abrir o pedido de review
+ *
+ * Eventos apenas locais (não vão ao Partner Center nem ao Sentry):
+ *  - store.custom_event.diagnostic : veredito do Store Services SDK ao logar um
+ *    custom event (logged/available/error/hresult). Gravado na primeira chamada
+ *    de cada execução e a cada mudança de estado — é o que distingue "SDK
+ *    quebrado no pacote" de "agregação atrasada" quando "Eventos
+ *    personalizados" aparece vazio no Partner Center.
  */
 
 const telemetry = require('./telemetry');

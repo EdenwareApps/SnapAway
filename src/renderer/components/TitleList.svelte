@@ -40,7 +40,7 @@
       selectedFilter = filter;
       clickTimer = setTimeout(() => {
         clickTimer = null;
-        const filterData = {value: filter.title, icon: filter.icon, type: 'title', hwnd: filter.hwnd, title: filter.title, process: filter.process};
+        const filterData = {value: filter.title, icon: filter.icon, type: 'title', hwnd: filter.hwnd, title: filter.title, process: filter.process, executable: filter.executable};
         console.log('[TitleList] Dispatching filter-selected with data:', filterData);
         dispatch('filter-selected', filterData);
       }, 50);
@@ -58,7 +58,7 @@
     console.log('[TitleList] handleFilterDoubleClick - filter.hwnd:', filter.hwnd);
     clearTimeout(clickTimer);
     clickTimer = null;
-    const filterData = {value: filter.title, icon: filter.icon, type: 'title', hwnd: filter.hwnd, title: filter.title, process: filter.process};
+    const filterData = {value: filter.title, icon: filter.icon, type: 'title', hwnd: filter.hwnd, title: filter.title, process: filter.process, executable: filter.executable};
     console.log('[TitleList] Dispatching filter-selected with data:', JSON.stringify(filterData));
     dispatch('filter-selected', filterData);
   }

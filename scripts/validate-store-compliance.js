@@ -85,6 +85,24 @@ function validateAppx(appxPath) {
     errors.push(`Invalid APPX PublisherDisplayName in ${appxPath}: ${publisherDisplayName} (expected ${exp.publisherDisplayName})`);
   }
 
+  // O checkbox de inicialização não tem onde escrever se o manifesto não declara a
+  // tarefa, e a política da Store exige que ela seja publicada desativada.
+  const startupTaskTag = manifestContent.match(/<desktop:StartupTask\b[^>]*>/);
+  if (!/Category\s*=\s*["']windows\.startupTask["']/.test(manifestContent) || !startupTaskTag) {
+    errors.push(`APPX ${path.basename(appxPath)} declares no desktop:StartupTask extension; startup cannot work in the packaged build`);
+  } else {
+    const taskAttributes = startupTaskTag[0];
+    if (!/TaskId\s*=\s*["']SnapAway["']/.test(taskAttributes)) {
+      errors.push(`APPX ${path.basename(appxPath)}: desktop:StartupTask must use TaskId="SnapAway" (${taskAttributes})`);
+    }
+    if (!/Enabled\s*=\s*["']false["']/.test(taskAttributes)) {
+      errors.push(`APPX ${path.basename(appxPath)}: desktop:StartupTask must ship with Enabled="false" (${taskAttributes})`);
+    }
+    if (/Arguments\s*=/.test(taskAttributes)) {
+      errors.push(`APPX ${path.basename(appxPath)}: desktop:StartupTask takes no Arguments attribute (${taskAttributes})`);
+    }
+  }
+
   fs.rmSync(tempDir, { recursive: true, force: true });
 }
 
@@ -265,8 +283,8 @@ if (warnings.length > 0) {
 if (errors.length === 0) {
   console.log('\n✅ App appears compliant for Microsoft Store submission!');
   console.log('\n📋 Next steps:');
-  console.log('   1. Build APPX: node scripts/build-appx.js');
-  console.log('   2. Sign APPX: node scripts/build-appx.js --sign --cert path/to/cert.pfx');
+  console.log('   1. Build APPX: npm run appx');
+  console.log('   2. Sign APPX: npm run dist:appx');
   console.log('   3. Submit to Partner Center');
 } else {
   console.log('\n❌ Fix critical issues before submission');

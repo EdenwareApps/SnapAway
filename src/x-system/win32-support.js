@@ -3,6 +3,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const config = require('../config/config.js');
+const { isBlockedWindowClass } = require('../shared/window-eligibility');
 const { spawn } = require('child_process');
 
 const user32 = koffi.load('user32.dll');
@@ -42,7 +43,9 @@ const functions = {
     GetWindow: user32.func('HWND __stdcall GetWindow(HWND hWnd, int uCmd)'),
     GetWindowThreadProcessId: user32.func('DWORD __stdcall GetWindowThreadProcessId(HWND hWnd, _Out_ DWORD *lpdwProcessId)'),
     GetClassNameW: user32.func('int __stdcall GetClassNameW(HWND hWnd, _Out_ char16_t *lpClassName, int nMaxCount)'),
-    IsWindowVisible: user32.func('bool __stdcall IsWindowVisible(HWND hWnd)')
+    IsWindowVisible: user32.func('bool __stdcall IsWindowVisible(HWND hWnd)'),
+    GetWindowRect: user32.func('bool __stdcall GetWindowRect(HWND hWnd, void *lpRect)'),
+    IsIconic: user32.func('bool __stdcall IsIconic(HWND hWnd)')
 };
 
 const ShellExecuteA = shell32.func('int64 __stdcall ShellExecuteA(void* hwnd, const char* lpOperation, const char* lpFile, const char* lpParameters, const char* lpDirectory, int nShowCmd)');
@@ -65,14 +68,7 @@ function isValidWindow(hwnd) {
         const classNameBuffer = Buffer.alloc(256 * 2);
         functions.GetClassNameW(hwnd, classNameBuffer, classNameBuffer.length / 2);
         const className = classNameBuffer.toString('utf16le').replace(/\0/g, '');
-        const blockedClasses = new Set([
-            'Windows.Internal.Shell.TabProxyWindow',
-            'Windows.UI.Core.CoreWindow',
-            'Intermediate D3D Window',
-            'Shell_TrayWnd',
-            'Shell_SecondaryTrayWnd'
-        ]);
-        return !blockedClasses.has(className);
+        return !isBlockedWindowClass(className);
     } catch (error) {
         console.error('Window validation error:', error);
         return false;
@@ -81,6 +77,37 @@ function isValidWindow(hwnd) {
 
 function isWindowHidden(hwnd) {
     return !functions.IsWindowVisible(hwnd) || (functions.GetWindowLongPtrW(hwnd, WindowConstants.GWL_STYLE) & WindowConstants.WS_CHILD) !== 0;
+}
+
+function toHwndPointer(hwnd) {
+    if (typeof hwnd === 'string') {
+        // Strings are always hexadecimal here: that is the format produced by
+        // the process addon (`%p`, 16 digits, no prefix). The decimal strings
+        // returned by strHwnd()/list() are NOT accepted — a wrong pointer just
+        // makes the probe fail closed, never hide the wrong window.
+        return BigInt(/^0x/i.test(hwnd) ? hwnd : `0x${hwnd}`);
+    }
+    return hwnd;
+}
+
+// A zero-area window has nothing to hide: auxiliary stubs, IME helpers and
+// listener windows report an empty rect. Only the HIDE path uses this — after
+// SW_HIDE the rect is still valid, so restore must not depend on it.
+function isZeroAreaWindow(hwnd) {
+    if (!hwnd) return false;
+    try {
+        const pointer = toHwndPointer(hwnd);
+        // A minimized window keeps a stale geometry we must not judge.
+        if (functions.IsIconic(pointer)) return false;
+        const rectBuffer = Buffer.alloc(16);
+        if (!functions.GetWindowRect(pointer, rectBuffer)) return false;
+        const width = rectBuffer.readInt32LE(8) - rectBuffer.readInt32LE(0);
+        const height = rectBuffer.readInt32LE(12) - rectBuffer.readInt32LE(4);
+        return width <= 0 || height <= 0;
+    } catch (error) {
+        // Never block a hide because the probe failed.
+        return false;
+    }
 }
 
 const strHwndCache = {};
@@ -356,6 +383,7 @@ module.exports = {
     list,
     hideWindows,
     showWindows,
+    isZeroAreaWindow,
     getProcessPIDsByName,
     setProcessPriority,
     runAsAdmin

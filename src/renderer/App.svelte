@@ -46,6 +46,10 @@
   let showTrayGuide = false;
   let showReviewPrompt = false; // Pedido de review (disparado pelo main quando engajado)
   let reviewBusy = false;
+  // Faixa de upsell do Pro: só aparece a partir do segundo uso real
+  // (hide+restore) e nunca para quem já é Pro.
+  let proUpsell = { eligible: false, usageCount: 0, usageDayCount: 0, minUsageCount: 2, dismissed: false };
+  $: showProUpsell = !isPro && !isFirstRun && proUpsell.eligible === true;
   let whatToFilterMessages = ['', ''];
   let selectElement; // Reference to the select element for width adjustment
   let ready = false; // Wait for initial state from main process before rendering
@@ -172,6 +176,9 @@
       });
       if (changed) config.filters = config.filters;
     }
+
+    // Learn/refresh filter bindings (best effort) before deciding what to hide.
+    syncFiltersWithWindows();
     
     // Check for new processes that match filters during hide-state
     if (!visible && previousProcesses.length > 0) {
@@ -307,9 +314,153 @@
     }
   }
 
-  // Função para ocultar uma janela especÃ­fica imediatamente
-  function matchesFilter(proc, filter) {
+  // Counts how many windows each executable has in the provided list. Mirrors
+  // buildExecutableWindowCounts() in src/system/system.js so the renderer can
+  // treat single-window processes as process-identified (HWND recovery).
+  function buildWindowCounts(procs) {
+    const counts = new Map();
+    (procs || []).forEach(proc => {
+      if (!proc || !proc.executable) return;
+      const key = String(proc.executable).toLowerCase();
+      // Prefer the authoritative count computed by the main process; the local
+      // process list may omit hidden windows and undercount multi-window apps.
+      const known = Number(proc.windowCount);
+      if (Number.isFinite(known) && known > 0) {
+        counts.set(key, Math.max(counts.get(key) || 0, known));
+      } else {
+        counts.set(key, (counts.get(key) || 0) + 1);
+      }
+    });
+    return counts;
+  }
+
+  // Maximum number of learned title tokens kept per filter. Tokens are a
+  // best-effort memory of drifted titles, never a requirement for a match.
+  const MAX_TITLE_TOKENS = 8;
+
+  // Same window KIND + executable as the filter. An empty className on the
+  // filter means "no constraint" (elevated windows where GetClassName fails).
+  function sameWindowIdentity(filter, proc) {
+    if (!filter || !proc) return false;
+    const execKey = filter.executable ? String(filter.executable).toLowerCase() : '';
+    const procExecKey = proc.executable ? String(proc.executable).toLowerCase() : '';
+    if (!execKey || !procExecKey || execKey !== procExecKey) return false;
+    return !filter.className || filter.className === proc.className;
+  }
+
+  function titleTokens(filter) {
+    return filter && Array.isArray(filter.tokens) ? filter.tokens : [];
+  }
+
+  // True when `title` matches the filter's original value OR any learned token.
+  // Tokens only widen the match; they never gate it.
+  function titleMatchesFilter(filter, title) {
+    if (!filter || !title) return false;
+    const compare = (a = '', b = '') => filter.insensitive
+      ? String(a).toLowerCase().includes(String(b).toLowerCase())
+      : String(a).includes(String(b));
+    if (filter.value && compare(title, filter.value)) return true;
+    return titleTokens(filter).some(token => token && compare(title, token));
+  }
+
+  // Best-effort learning/persistence of filter bindings, run after each process
+  // refresh. The renderer owns config writes, so anything learned here survives
+  // (main-side mutations would be overwritten by the next updateConfig).
+  //   1. Learn: the stored HWND still points at a live window of the same
+  //      identity -> remember its (possibly drifted) title as a token.
+  //   2. Rebind: exactly one live window of the same identity matches the
+  //      filter's title (or the process owns a single window) -> move the
+  //      stored HWND to it. Additive: never unmatches anything.
+  let syncingFilters = false;
+  function syncFiltersWithWindows() {
+    if (syncingFilters) return;
+    if (!config || !Array.isArray(config.filters) || config.filters.length === 0) return;
+    if (!Array.isArray(processes) || processes.length === 0) return;
+
+    syncingFilters = true;
+    try {
+      const windowCounts = buildWindowCounts(processes);
+      let changed = false;
+
+      for (const filter of config.filters) {
+        if (!filter || filter.type !== 'title' || !filter.executable) continue;
+
+        const execKey = String(filter.executable).toLowerCase();
+
+        // 1) Learn the drifted title of the window this filter is bound to.
+        if (filter.hwnd) {
+          const live = processes.find(p => p && p.hwnd === filter.hwnd);
+          if (live && sameWindowIdentity(filter, live) && live.title && live.title !== filter.value) {
+            const tokens = titleTokens(filter);
+            if (!tokens.includes(live.title)) {
+              filter.tokens = [...tokens, live.title].slice(-MAX_TITLE_TOKENS);
+              changed = true;
+            }
+          }
+        }
+
+        // 2) Rebind the stored HWND when the target window is unambiguous.
+        const titleCandidates = processes.filter(p => p && sameWindowIdentity(filter, p) && titleMatchesFilter(filter, p.title));
+        let target = titleCandidates.length === 1 ? titleCandidates[0] : null;
+        if (!target && windowCounts.get(execKey) === 1) {
+          const sole = processes.filter(p => p && sameWindowIdentity(filter, p));
+          if (sole.length === 1) target = sole[0];
+        }
+        if (target && filter.hwnd !== target.hwnd) {
+          filter.hwnd = target.hwnd;
+          if (target.title) filter.title = target.title;
+          changed = true;
+        }
+      }
+
+      if (changed) {
+        config.filters = config.filters;
+        if (window.api && window.api.updateConfig) window.api.updateConfig(config);
+      }
+    } catch (error) {
+      console.warn('[App.svelte] syncFiltersWithWindows failed:', error);
+    } finally {
+      syncingFilters = false;
+    }
+  }
+
+  // Shared matcher that mirrors matchesFilter() in src/system/system.js:
+  //   1. overlay-hwnd filters stay bound to their session HWND;
+  //   2. a stored HWND that is still the same window AND belongs to the same
+  //      executable matches (guards against recycled HWNDs);
+  //   3. single-window processes can be re-resolved by executable after a
+  //      restart or a title change;
+  //   4. fallback: original type-based comparison (title/process/className).
+  function matchesFilter(proc, filter, windowCounts) {
     if (!proc || !filter) return false;
+
+    if (filter.type === 'overlay-hwnd') {
+      return !!filter.hwnd && proc.hwnd === filter.hwnd;
+    }
+
+    const execKey = filter.executable ? String(filter.executable).toLowerCase() : '';
+    const procExecKey = proc.executable ? String(proc.executable).toLowerCase() : '';
+    const execMatch = !!execKey && !!procExecKey && execKey === procExecKey;
+    const processMatch = !execMatch && !!filter.process && !!proc.process &&
+      String(filter.process).toLowerCase() === String(proc.process).toLowerCase();
+
+    // Same window class as the filtered one (empty on the filter = no
+    // constraint, e.g. elevated windows where GetClassName fails).
+    const classMatch = !filter.className || filter.className === proc.className;
+
+    if (filter.hwnd && proc.hwnd === filter.hwnd && (execMatch || processMatch)) {
+      return true;
+    }
+
+    // Identity could not be resolved (no executable/process info): fall back to
+    // a pure HWND match so explicitly-bound filters keep working.
+    if (filter.hwnd && proc.hwnd === filter.hwnd && !procExecKey && !proc.process) {
+      return true;
+    }
+
+    if (execMatch && classMatch && windowCounts && windowCounts.get(execKey) === 1) {
+      return true;
+    }
 
     const compare = (a = '', b = '') => {
       if (filter.insensitive) {
@@ -320,7 +471,7 @@
 
     switch (filter.type) {
       case 'title':
-        return proc.title && compare(proc.title, filter.value);
+        return titleMatchesFilter(filter, proc.title);
       case 'process':
         return proc.process && compare(proc.process, filter.value);
       case 'className':
@@ -334,7 +485,8 @@
   async function hideMatchingWindows(filter) {
     if (!filter || !window.api || !window.api.hideSpecificWindow) return;
 
-    const matching = processes.filter(proc => matchesFilter(proc, filter));
+    const windowCounts = buildWindowCounts(processes);
+    const matching = processes.filter(proc => matchesFilter(proc, filter, windowCounts));
     if (matching.length === 0) {
       console.log('[App.svelte] No matching windows found to hide for filter:', filter);
       return;
@@ -365,7 +517,8 @@
       console.error('[App.svelte] Error fetching processes to show windows:', error);
     }
 
-    const matching = allProcesses.filter(proc => matchesFilter(proc, filter));
+    const windowCounts = buildWindowCounts(allProcesses);
+    const matching = allProcesses.filter(proc => matchesFilter(proc, filter, windowCounts));
     if (matching.length === 0) {
       console.log('[App.svelte] No matching windows found to show for filter:', filter);
       return;
@@ -406,10 +559,11 @@
     console.log('[App.svelte] Ensuring all filtered windows are hidden during hide-state');
 
     // Build a unique set of windows that match any filter
+    const windowCounts = buildWindowCounts(processes);
     const toHide = new Map();
     processes.forEach(proc => {
       if (!proc || !proc.hwnd) return;
-      const matches = config.filters.some(filter => matchesFilter(proc, filter));
+      const matches = config.filters.some(filter => matchesFilter(proc, filter, windowCounts));
       if (matches) {
         toHide.set(proc.hwnd, proc);
       }
@@ -502,12 +656,46 @@
     handleReviewLater();
   }
   
-  function showProModalFor(feature, featureName) {
+  function showProModalFor(feature, featureName, source) {
     proModalFeature = feature || '';
     proModalFeatureName = featureName || '';
     showProModal = true;
     if (window.api && window.api.trackEvent) {
-      window.api.trackEvent('retention.pro_modal_viewed', { feature: feature || 'generic' });
+      window.api.trackEvent('retention.pro_modal_viewed', {
+        feature: feature || 'generic',
+        source: source || 'generic'
+      });
+    }
+  }
+
+  // --- Faixa de upsell do Pro ---
+  // O main decide a elegibilidade (a partir do 2º uso real: ocultar + restaurar).
+  async function loadProUpsell() {
+    if (!window.api || !window.api.getProUpsell) return;
+    try {
+      const state = await window.api.getProUpsell();
+      if (state) proUpsell = state;
+    } catch (error) {
+      console.error('[App.svelte] Error loading Pro upsell state:', error);
+    }
+  }
+
+  function handleProUpsellOpen() {
+    const usageCount = proUpsell.usageCount || 0;
+    if (window.api && window.api.trackEvent) {
+      // O Partner Center só recebe o NOME do evento (details são descartados),
+      // por isso a faixa tem um evento próprio além do `source` no modal.
+      window.api.trackEvent('retention.pro_upsell_modal_opened', { usageCount });
+      window.api.trackEvent('retention.pro_upsell_clicked', { usageCount });
+    }
+    // Sem `feature`: o modal abre como upsell genérico (sem bloco de aviso).
+    showProModalFor('', '', 'pro_upsell');
+  }
+
+  function handleProUpsellDismiss() {
+    proUpsell = { ...proUpsell, eligible: false, dismissed: true };
+    if (window.api && window.api.dismissProUpsell) {
+      window.api.dismissProUpsell();
     }
   }
 
@@ -742,6 +930,11 @@
       if (state === 'hide') {
         viewFilterOpen = false;
       }
+      // O main acabou de registrar o dia de uso (se houve janelas restauradas);
+      // recarrega o estado da faixa de upsell.
+      if (state === 'show') {
+        loadProUpsell();
+      }
       syncBodyState(currentState);
     });
   }
@@ -964,6 +1157,7 @@
         
         // Load Pro status
         await loadProStatus();
+        await loadProUpsell();
       } catch (error) {
         console.error('[App.svelte] Error initializing API:', error);
       }
@@ -1086,6 +1280,23 @@
         on:add-filter={handleAddFilter}
         on:hide-new-window={handleHideNewWindow}
       />
+      {#if showProUpsell}
+        <div class="pro-upsell-banner">
+          <span class="pro-upsell-copy">
+            <i class="fas fa-bolt" aria-hidden="true"></i>
+            {t('PRO_UPSELL_TITLE') || 'Hide even faster with Pro'}
+          </span>
+          <button class="pro-upsell-cta" on:click={handleProUpsellOpen}>
+            {t('PRO_UPSELL_CTA') || 'I want it'}
+          </button>
+          <button
+            class="pro-upsell-dismiss"
+            title={t('PRO_UPSELL_DISMISS') || 'Dismiss'}
+            aria-label={t('PRO_UPSELL_DISMISS') || 'Dismiss'}
+            on:click={handleProUpsellDismiss}
+          >&#x2715;</button>
+        </div>
+      {/if}
       <header>
         <h2 class="select-window">
           {whatToFilterMessages[0]}            
@@ -1402,6 +1613,57 @@
   }
   #font-case-button i {
     color: inherit;
+  }
+
+  .pro-upsell-banner {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin: 0.6rem 0 0.6rem 0;
+    padding: 0.5rem 0.75rem;
+    border: 1px solid #3fb49f;
+    border-radius: 6px;
+    background: rgba(63, 180, 159, 0.12);
+    color: CanvasText;
+    font-size: 0.92rem;
+  }
+  .pro-upsell-copy {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    flex: 1;
+    min-width: 0;
+  }
+  .pro-upsell-copy i {
+    color: #3fb49f;
+  }
+  .pro-upsell-cta {
+    border-width: 0;
+    border-radius: 4px;
+    padding: 0.25rem 0.7rem;
+    background: #3fb49f;
+    color: #fff;
+    font-weight: 600;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .pro-upsell-cta:hover,
+  .pro-upsell-cta:focus {
+    background: #35a08c;
+    color: #fff;
+  }
+  .pro-upsell-dismiss {
+    border-width: 0;
+    background: transparent;
+    color: inherit;
+    cursor: pointer;
+    opacity: 0.7;
+    padding: 0 0.15rem;
+    line-height: 1;
+  }
+  .pro-upsell-dismiss:hover,
+  .pro-upsell-dismiss:focus {
+    opacity: 1;
   }
   
 </style>

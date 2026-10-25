@@ -19,7 +19,8 @@
       icon: filter.icon,
       hwnd: filter.hwnd,
       className: filter.className,
-      process: filter.process
+      process: filter.process,
+      executable: filter.executable
     }
   }
     

@@ -2,9 +2,13 @@ const Sentry = require('@sentry/electron/main');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
+const telemetryLog = require('./telemetry-log');
 const DEFAULT_SENTRY_DSN = 'https://83cbc4628350ac6bd5001184d1d23365@o4511378553307136.ingest.us.sentry.io/4511378556452864';
 
 const TELEMETRY_LOG_FILE = 'iap-telemetry.log';
+// O log é apenas append (sem limite natural): rotaciona ao passar de 512 KB,
+// mantendo uma única geração anterior (.1.log) — no máximo ~1 MB no disco.
+const TELEMETRY_LOG_MAX_BYTES = telemetryLog.DEFAULT_MAX_BYTES;
 let telemetryApp = null;
 let telemetryInitialized = false;
 
@@ -101,7 +105,7 @@ function writePersistentTelemetryLog(eventName, details = null) {
       event: eventName,
       details
     });
-    fs.appendFileSync(getTelemetryPath(), `${line}${os.EOL}`, 'utf8');
+    telemetryLog.appendTelemetryLogLine(getTelemetryPath(), `${line}${os.EOL}`, TELEMETRY_LOG_MAX_BYTES);
   } catch (error) {
     console.error('[TELEMETRY] Failed to append telemetry log:', error && error.message ? error.message : error);
   }
@@ -280,18 +284,41 @@ function initMainTelemetry(app, options = {}) {
   return telemetryInitialized;
 }
 
+// Ruído conhecido (ELECTRON-8 / HANG_QUIESCE): processos que NÃO caíram por
+// crash. `launch-failed` = renderer nunca subiu (overlay, ambiental);
+// `killed` = processo terminado (o Windows mata o app no shutdown → exit code
+// 0x40010004 DBG_TERMINATE_PROCESS — isto NÃO é crash); `clean-exit` = saída
+// normal. Tudo isso continua no log persistente, mas não vira issue no Sentry,
+// senão o Sentry reporta hangs/terminações como se fossem crashes.
+const PROCESS_GONE_EVENTS = new Set([
+  'window.render-process-gone',
+  'app.render-process-gone',
+  'app.child-process-gone',
+  // `gpu-process-crashed` não entrega `details` (só `{ killed }`), mas entra aqui
+  // para a normalização abaixo valer também para ele.
+  'app.gpu-process-crashed'
+]);
+const NON_CRASH_PROCESS_REASONS = new Set(['launch-failed', 'killed', 'clean-exit']);
+
+// `app.gpu-process-crashed` informa apenas `killed`: `true` = o processo foi
+// terminado de propósito (shutdown/kill), NÃO é crash; `false` = crash de
+// verdade. O `child-process-gone` informa `reason` ('killed'/'crashed'/…).
+// Normalizamos os dois formatos ANTES de sanitizar/logar, para o filtro de ruído,
+// o log persistente e a tag `processReason` funcionarem igual nos dois casos.
+function normalizeProcessGoneDetails(eventName, details) {
+  if (!details || typeof details !== 'object') return details;
+  if (!PROCESS_GONE_EVENTS.has(eventName)) return details;
+  if (details.reason) return details;
+  if (typeof details.killed !== 'boolean') return details;
+  return Object.assign({}, details, { reason: details.killed ? 'killed' : 'crashed' });
+}
+
 function captureTelemetryEvent(eventName, details = {}, options = {}) {
-  const sanitizedDetails = sanitizeTelemetryDetails(details);
+  const sanitizedDetails = sanitizeTelemetryDetails(normalizeProcessGoneDetails(eventName, details));
   writePersistentTelemetryLog(eventName, sanitizedDetails);
 
-  // Ruído conhecido (ELECTRON-8): renderer que NÃO chega a subir (reason
-  // 'launch-failed'). No overlay isso é ambiental (AV/GPU/recursos), não é bug
-  // do app — suprimimos aqui para não virar issue no Sentry (continua no log
-  // persistente). Trade-off: um launch-failed da janela PRINCIPAL também seria
-  // suprimido, mas isso seria catastrófico e apareceria por outros sinais.
-  const renderReason = details && details.reason;
-  if (renderReason === 'launch-failed' &&
-      (eventName === 'window.render-process-gone' || eventName === 'app.render-process-gone')) {
+  const processReason = sanitizedDetails && sanitizedDetails.reason;
+  if (processReason && PROCESS_GONE_EVENTS.has(eventName) && NON_CRASH_PROCESS_REASONS.has(processReason)) {
     return;
   }
 
@@ -303,6 +330,14 @@ function captureTelemetryEvent(eventName, details = {}, options = {}) {
       }
       if (scope && typeof scope.setTag === 'function') {
         scope.setTag('eventName', eventName);
+        // Tags de diagnóstico: permitem agrupar/quantificar por motivo no Sentry
+        // (antes iam só em extras, que a API de issues não expõe).
+        if (sanitizedDetails && sanitizedDetails.reason) {
+          scope.setTag('processReason', String(sanitizedDetails.reason));
+        }
+        if (sanitizedDetails && sanitizedDetails.exitCode !== undefined) {
+          scope.setTag('processExitCode', String(sanitizedDetails.exitCode));
+        }
       }
       if (scope && typeof scope.setFingerprint === 'function') {
         // Agrupa cada tipo de evento no seu próprio issue (ex.:
@@ -367,6 +402,14 @@ function captureProductEvent(eventName, details = {}, options = {}) {
       console.warn('[TELEMETRY] Failed to log Partner Center custom event:', error && error.message ? error.message : error);
     }
   }
+}
+
+// Grava um evento APENAS no log persistente: sem Sentry e sem Partner Center.
+// Usado por diagnósticos internos (ex.: veredito do Store Services SDK) que não
+// devem entrar no funil nem correm o risco de recursão no logger de custom
+// events da Store.
+function logLocalEvent(eventName, details = {}) {
+  writePersistentTelemetryLog(eventName, sanitizeTelemetryDetails(details));
 }
 
 function captureTelemetryException(error, details = {}) {
@@ -461,14 +504,34 @@ function captureStartupDiagnostics(app, options = {}) {
   setTelemetryContext('startup', diagnostics);
 }
 
+// Aguarda o envio dos eventos pendentes ao Sentry. O transporte do SDK é
+// assíncrono: sem este flush, eventos gerados pouco antes de o app encerrar
+// (ex.: render-process-gone seguido de quit) são PERDIDOS. Chamado no
+// before-quit — ver src/main/index.js.
+async function flushTelemetry(timeoutMs = 3000) {
+  if (!isSentryEnabled() || !hasSentryClient()) {
+    return false;
+  }
+  try {
+    if (typeof Sentry.flush === 'function') {
+      return await Sentry.flush(timeoutMs);
+    }
+  } catch (error) {
+    console.warn('[TELEMETRY] Sentry flush failed:', error && error.message ? error.message : error);
+  }
+  return false;
+}
+
 module.exports = {
   initMainTelemetry,
   captureTelemetryEvent,
   captureProductEvent,
+  logLocalEvent,
   setPartnerCenterCustomEventLogger,
   captureTelemetryException,
   setTelemetryContext,
   captureGpuEnvironment,
+  flushTelemetry,
   writePersistentTelemetryLog,
   getTelemetryPath
 };

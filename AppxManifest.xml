@@ -1,4 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+  Cópia de referência do manifesto que a Store recebe. O build não lê este arquivo:
+  o electron-builder preenche o template dele
+  (app-builder-lib/templates/appx/appxmanifest.xml) a partir de build.appx no
+  package.json, e a tarefa de inicialização vem de build/appx/extensions.xml via
+  build.appx.customExtensionsPath. Mantenha os dois em sincronia.
+-->
 <Package
   xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
   xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
@@ -58,8 +65,7 @@
         DisplayName="${productName}"
         Square150x150Logo="assets\Square150x150Logo.png"
         Square44x44Logo="assets\Square44x44Logo.png"
-        Description="${description}"
-        dpiAware="true">
+        Description="${description}">
         <uap:DefaultTile Wide310x150Logo="assets\Wide310x150Logo.png">
           <uap:ShowNameOnTiles>
             <uap:ShowOn Tile="square150x150Logo" />
@@ -71,7 +77,7 @@
       </uap:VisualElements>
       <Extensions>
         <desktop:Extension Category="windows.startupTask" Executable="app\${executableName}.exe" EntryPoint="Windows.FullTrustApplication">
-          <desktop:StartupTask TaskId="SnapAway" Enabled="false" DisplayName="${productName}" Arguments="--autostart" />
+          <desktop:StartupTask TaskId="SnapAway" Enabled="false" DisplayName="${productName}" />
         </desktop:Extension>
       </Extensions>
     </Application>

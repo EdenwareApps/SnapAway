@@ -118,31 +118,48 @@ try {
   TESTS.push({ name: 'IAP addon', status: 'FAILED' });
 }
 
-// Test 5: Build and Sign scripts
+// Test 5: Build inputs
 console.log('\nTest 5: Build scripts');
 try {
-  const buildScript = path.join(ROOT_DIR, 'scripts', 'build-appx.js');
   const validateScript = path.join(ROOT_DIR, 'scripts', 'validate-store-compliance.js');
-  
+  const packageJson = JSON.parse(fs.readFileSync(path.join(ROOT_DIR, 'package.json'), 'utf8'));
+  const extensionsRel = packageJson.build && packageJson.build.appx && packageJson.build.appx.customExtensionsPath;
+  const extensionsPath = extensionsRel ? path.join(ROOT_DIR, extensionsRel) : null;
+
   let valid = true;
-  if (!fs.existsSync(buildScript)) {
-    console.log('   ❌ FAILED: build-appx.js not found');
-    valid = false;
-  }
   if (!fs.existsSync(validateScript)) {
     console.log('   ❌ FAILED: validate-store-compliance.js not found');
     valid = false;
   }
+  if (!extensionsPath) {
+    console.log('   ❌ FAILED: build.appx.customExtensionsPath not set in package.json');
+    valid = false;
+  } else if (!fs.existsSync(extensionsPath)) {
+    console.log(`   ❌ FAILED: ${extensionsRel} not found`);
+    valid = false;
+  } else {
+    const extensionsXml = fs.readFileSync(extensionsPath, 'utf8');
+    if (!/windows\.startupTask/.test(extensionsXml)) {
+      console.log(`   ❌ FAILED: ${extensionsRel} declares no windows.startupTask extension`);
+      valid = false;
+    } else if (!/<desktop:StartupTask\b[^>]*\bTaskId="SnapAway"/.test(extensionsXml)) {
+      console.log(`   ❌ FAILED: ${extensionsRel} needs desktop:StartupTask TaskId="SnapAway"`);
+      valid = false;
+    } else if (!/<desktop:StartupTask\b[^>]*\bEnabled="false"/.test(extensionsXml)) {
+      console.log(`   ❌ FAILED: ${extensionsRel} needs Enabled="false" (startup must stay opt-in)`);
+      valid = false;
+    }
+  }
   
   if (valid) {
-    console.log('   ✅ PASSED: All build scripts present');
-    TESTS.push({ name: 'Build scripts', status: 'PASSED' });
+    console.log('   ✅ PASSED: All build inputs present');
+    TESTS.push({ name: 'Build inputs', status: 'PASSED' });
   } else {
-    TESTS.push({ name: 'Build scripts', status: 'FAILED' });
+    TESTS.push({ name: 'Build inputs', status: 'FAILED' });
   }
 } catch (error) {
   console.log('   ❌ FAILED:', error.message);
-  TESTS.push({ name: 'Build scripts', status: 'FAILED' });
+  TESTS.push({ name: 'Build inputs', status: 'FAILED' });
 }
 
 // Test 6: APPX exists
@@ -153,7 +170,7 @@ try {
   
   if (appxFiles.length === 0) {
     console.log('   ❌ FAILED: No APPX files found');
-    console.log('   ℹ️  Run: node scripts/build-appx.js');
+    console.log('   ℹ️  Run: npm run appx');
     TESTS.push({ name: 'APPX package', status: 'FAILED' });
   } else {
     const latest = appxFiles.sort().pop();

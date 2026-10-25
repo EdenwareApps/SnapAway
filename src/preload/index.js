@@ -242,6 +242,8 @@ contextBridge.exposeInMainWorld('api', {
   onRevealHint: callback => ipcRenderer.on('show-reveal-hint', callback),
   // License system APIs
   getProStatus: () => ipcRenderer.invoke('get-pro-status'),
+  getProUpsell: () => ipcRenderer.invoke('get-pro-upsell'),
+  dismissProUpsell: () => ipcRenderer.send('dismiss-pro-upsell'),
   activateLicense: licenseKey => ipcRenderer.invoke('activate-license', licenseKey),
   deactivateLicense: () => ipcRenderer.invoke('deactivate-license'),
   checkAppLimit: currentCount => ipcRenderer.invoke('check-app-limit', currentCount),

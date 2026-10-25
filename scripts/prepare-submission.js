@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env node
+#!/usr/bin/env node
 
 /**
  * SnapAway - Microsoft Store Submission Preparation
@@ -38,7 +38,7 @@ const appxFiles = fs.readdirSync(DIST_DIR)
   .sort((a, b) => b.time - a.time);
 
 if (appxFiles.length === 0) {
-  console.error('   âŒ No APPX files found. Run: node scripts/build-appx.js');
+  console.error('   âŒ No APPX files found. Run: npm run appx');
   process.exit(1);
 }
 
@@ -54,7 +54,7 @@ try {
   console.log('   âœ“ APPX is signed');
 } catch (error) {
   console.warn('   âš ï¸  APPX is not signed');
-  console.log('\n   To sign, use: node scripts/build-appx.js --sign --cert path/to/cert.pfx');
+  console.log('\n   To sign, use: npm run dist:appx');
   console.log('   Or sign manually: SignTool sign /fd SHA256 /f "cert.pfx" "' + latestAppx.path + '"');
 }
 

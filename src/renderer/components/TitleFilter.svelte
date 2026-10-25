@@ -66,6 +66,7 @@
       hwnd: filter.hwnd,
       process: filter.process,
       title: filter.title,
+      executable: filter.executable,
       insensitive: insensitive
     }
   }
