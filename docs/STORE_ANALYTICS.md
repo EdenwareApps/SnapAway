@@ -127,9 +127,9 @@ O app em si já está traduzido para **20 idiomas** (`src/language/texts.json`):
 | 3 | `SearchTerm1..7` | ar | `إخفاء التطبيقات ويندوز` (1 e 2) e `إخفاء النوافذ` (3 e 7) duplicados → **3 slots de 7 desperdiçados** |
 | 4 | `SearchTerm1..7` | todos | Todos os termos são variações de "ocultar X no Windows". Faltam famílias de intenção: `panic button`, `privacy screen`, `hide taskbar`, `tecla do chefe`, `老板键` |
 | 5 | `SearchTerm5` | de | `fenster ausblenden tastenkürzel` = **31 caracteres**, acima do limite de 30 |
-| 6 | `TrailerToPlayAtTopOfListing` | pt, ar, de, ja, zh-cn | Vazio — o único trailer existente **não toca no topo** nesses idiomas (só `en-us, es, fr, ko`) |
+| 6 | `TrailerToPlayAtTopOfListing` | pt, ar, de, ja, zh-cn | Vazio — o único trailer existente **não toca no topo** nesses idiomas (só `en-us, es, fr, ko`). Ao importar numa submissão nova o campo precisa ir **vazio**: o ID do trailer é por submissão e a URL antiga é rejeitada (`The value you provided is not valid`) |
 | 7 | `Feature10` | todos | `Free to try` / `Grátis para testar` — não é trial; é versão gratuita limitada a 2 apps. Mensagem incorreta sobre o modelo de negócio |
-| 8 | `Title` | ja | `ワンタップでアプリを即非表示` ("um toque") — o produto usa **teclado**, não toque |
+| 8 | `Title` | ja | `ワンタップでアプリを即非表示` ("um toque") — o produto usa **teclado**, não toque. Só que `Title` tem de ser um **nome reservado**, então a correção possível é `SnapAway` puro |
 | 9 | `DesktopScreenshot1..5` | todos | **5 de 30 slots usados.** Nenhum par antes/depois, nenhum shot do que o Pro desbloqueia |
 | 10 | `Description` | todos | O bloco comercial (grátis/Pro/compra única) é o **penúltimo/último** parágrafo — abaixo da dobra |
 | 11 | `MobileScreenshot*`, `XboxScreenshot*`, `SurfaceHub*` | — | Vazios; irrelevante para app de PC |

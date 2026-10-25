@@ -26,8 +26,8 @@ python docs\store-listing\optimize-listing.py "$env:USERPROFILE\Downloads\listin
 | 3 | `SearchTerm1..7` | todos os 9 | Duplicatas removidas (`pt` 2×, `ar` 2 pares) e famílias de intenção ausentes adicionadas: `panic button`, `privacy screen`, `hide taskbar`, `tecla do chefe`, `老板键`, `老板来了` |
 | 4 | `SearchTerm5` | de | `fenster ausblenden tastenkürzel` (31 chars, acima do limite) → `chef taste` |
 | 5 | `Feature10` | todos os 9 | `Free to try` (não é trial) → `Free: hide up to 2 apps · Pro Lifetime: unlimited apps · one-time purchase, no subscription` |
-| 6 | `TrailerToPlayAtTopOfListing` | pt, ar, de, ja, zh-cn | Vazio (trailer não tocava no topo) → mesma URL do `en-us` |
-| 7 | `Title` | ja | `ワンタップでアプリを即非表示` ("um toque", teclado não é toque) → `SnapAway – ショートカットで即非表示` |
+| 6 | `TrailerToPlayAtTopOfListing` | todos os 9 | **Limpo**. O ID do trailer vale só para a submissão em que foi enviado: ao importar numa submissão seguinte o Partner Center responde `The value you provided is not valid` e bloqueia os 5 idiomas. Deixe vazio e escolha o trailer na UI |
+| 7 | `Title` | ja | `ワンタップでアプリを即非表示` ("um toque", teclado não é toque) → `SnapAway`. O `Title` precisa ser um **nome de produto reservado**; qualquer sufixo localizado é rejeitado com `Title must be one of your reserved product names` |
 
 Validação feita no arquivo gerado: header idêntico, 453 linhas, `Field`/`ID`/`Type`/`default`
 preservados linha a linha, nenhum termo de busca duplicado ou acima de 30 caracteres, UTF-8 com BOM

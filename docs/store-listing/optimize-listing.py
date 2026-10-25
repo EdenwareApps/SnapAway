@@ -8,8 +8,11 @@ Mudancas aplicadas (ver docs/STORE_ANALYTICS.md, secao 6):
   2. Description      -> move o bloco comercial (gratis/Pro + compra unica) para a 2a posicao
   3. SearchTerm1..7   -> remove duplicatas e cobre familias de intencao ausentes
   4. Feature10        -> corrige "Free to try" (nao e trial, e versao gratuita limitada)
-  5. TrailerToPlayAtTop -> replica o trailer en-us nos idiomas onde estava vazio
-  6. Title (ja)       -> corrige "ワンタップ" (o produto usa teclado)
+  5. TrailerToPlayAtTop -> limpa: o trailer do Partner Center e por submissao, entao a URL
+                          exportada deixa de existir na submissao seguinte e a importacao
+                          falha com "The value you provided is not valid"
+  6. Title (ja)       -> precisa ser um nome de produto reservado; o sufixo em japones
+                          e rejeitado com "must be one of your reserved product names"
 
 Uso:
     python docs/store-listing/optimize-listing.py <caminho-do-csv-original>
@@ -90,7 +93,7 @@ SEARCH_TERMS = {
               "快速隐藏应用", "老板键", "隐藏任务栏", "老板来了"],
 }
 
-TITLE_FIX = {"ja": "SnapAway – ショートカットで即非表示"}
+TITLE_FIX = {"ja": "SnapAway"}
 
 
 # ---------------------------------------------------------------- manipulacao
@@ -182,13 +185,14 @@ def main():
             row[lang] = FEATURE10[lang]
 
     # 5. trailer no topo
-    trailer = (by_field["TrailerToPlayAtTopOfListing"].get("en-us") or "").strip()
-    if trailer:
-        for lang in LANGS:
-            row = by_field["TrailerToPlayAtTopOfListing"]
-            if not (row.get(lang) or "").strip():
-                changes.append((f"TrailerToPlayAtTopOfListing[{lang}]", "", "= en-us"))
-                row[lang] = trailer
+    # O ID do trailer vale apenas para a submissao em que foi enviado; replicar a
+    # URL exportada para outros idiomas faz a importacao falhar com "The value you
+    # provided is not valid". Deixamos o campo vazio e o trailer e escolhido na UI.
+    row = by_field["TrailerToPlayAtTopOfListing"]
+    for lang in LANGS + ["default"]:
+        if (row.get(lang) or "").strip():
+            changes.append((f"TrailerToPlayAtTopOfListing[{lang}]", (row.get(lang) or "").strip(), ""))
+            row[lang] = ""
 
     # 6. titulo japones
     for lang, title in TITLE_FIX.items():

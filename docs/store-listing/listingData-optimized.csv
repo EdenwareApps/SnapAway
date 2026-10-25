@@ -181,7 +181,7 @@ ReleaseNotes,3,Text,,"• Fixes the app hanging when Windows shuts down, restart
 • 修复了关闭应用后偶尔出现的意外退出问题
 • 修复了正常退出后图形加速被误关闭的问题
 • 选项中的“关于”已改为带独立图标的“帮助”"
-Title,4,Text,,SnapAway – Hide Apps Instantly,SnapAway – Ocultar apps instantaneamente,SnapAway – إخفاء التطبيقات فورًا,SnapAway – Apps sofort ausblenden,SnapAway – Ocultar apps al instante,SnapAway – Masquer les apps instantanément,SnapAway – ショートカットで即非表示,SnapAway – 즉시 앱 숨기기,SnapAway – 即时隐藏应用
+Title,4,Text,,SnapAway – Hide Apps Instantly,SnapAway – Ocultar apps instantaneamente,SnapAway – إخفاء التطبيقات فورًا,SnapAway – Apps sofort ausblenden,SnapAway – Ocultar apps al instante,SnapAway – Masquer les apps instantanément,SnapAway,SnapAway – 즉시 앱 숨기기,SnapAway – 即时隐藏应用
 ShortTitle,5,Text,,SnapAway,SnapAway,SnapAway,SnapAway,SnapAway,SnapAway,SnapAway,SnapAway,SnapAway
 SortTitle,6,Text,,,,,,,,,,
 VoiceTitle,7,Text,,SnapAway,SnapAway,SnapAway,SnapAway,SnapAway,SnapAway,SnapAway,SnapAway,SnapAway
@@ -532,7 +532,7 @@ SearchTerm4,903,Text,,window hider,boss key windows,Boss Key ويندوز,boss k
 SearchTerm5,904,Text,,panic button,tecla do chefe,زر الذعر,chef taste,tecla del jefe,touche patron,パニックボタン,패닉 버튼,老板键
 SearchTerm6,905,Text,,privacy screen,botão do pânico,شاشة الخصوصية,panik taste,botón de pánico,bouton panique,タスクバー 非表示,작업 표시줄 숨기기,隐藏任务栏
 SearchTerm7,906,Text,,hide taskbar,ocultar barra de tarefas,إخفاء شريط المهام,taskleiste ausblenden,ocultar barra de tareas,masquer barre des tâches,画面 隠す,화면 숨기기,老板来了
-TrailerToPlayAtTopOfListing,999,Relative path (or URL to file in Partner Center),,https://developer.microsoft.com/en-us/dashboard/apps/9NWCB3QXSBVJ/submissions/1152921505702228504/trailers/3024554595943606698,https://developer.microsoft.com/en-us/dashboard/apps/9NWCB3QXSBVJ/submissions/1152921505702228504/trailers/3024554595943606698,https://developer.microsoft.com/en-us/dashboard/apps/9NWCB3QXSBVJ/submissions/1152921505702228504/trailers/3024554595943606698,https://developer.microsoft.com/en-us/dashboard/apps/9NWCB3QXSBVJ/submissions/1152921505702228504/trailers/3024554595943606698,https://developer.microsoft.com/en-us/dashboard/apps/9NWCB3QXSBVJ/submissions/1152921505702228504/trailers/3024554595943606698,https://developer.microsoft.com/en-us/dashboard/apps/9NWCB3QXSBVJ/submissions/1152921505702228504/trailers/3024554595943606698,https://developer.microsoft.com/en-us/dashboard/apps/9NWCB3QXSBVJ/submissions/1152921505702228504/trailers/3024554595943606698,https://developer.microsoft.com/en-us/dashboard/apps/9NWCB3QXSBVJ/submissions/1152921505702228504/trailers/3024554595943606698,https://developer.microsoft.com/en-us/dashboard/apps/9NWCB3QXSBVJ/submissions/1152921505702228504/trailers/3024554595943606698
+TrailerToPlayAtTopOfListing,999,Relative path (or URL to file in Partner Center),,,,,,,,,,
 Trailer1,1000,Relative path (or URL to file in Partner Center),,https://developer.microsoft.com/en-us/dashboard/apps/9NWCB3QXSBVJ/submissions/1152921505702228504/trailers/3024554595943606698,,,,https://developer.microsoft.com/en-us/dashboard/apps/9NWCB3QXSBVJ/submissions/1152921505702228504/trailers/3024554595943606698,https://developer.microsoft.com/en-us/dashboard/apps/9NWCB3QXSBVJ/submissions/1152921505702228504/trailers/3024554595943606698,,https://developer.microsoft.com/en-us/dashboard/apps/9NWCB3QXSBVJ/submissions/1152921505702228504/trailers/3024554595943606698,
 Trailer2,1001,Relative path (or URL to file in Partner Center),,,,,,,,,,
 Trailer3,1002,Relative path (or URL to file in Partner Center),,,,,,,,,,
