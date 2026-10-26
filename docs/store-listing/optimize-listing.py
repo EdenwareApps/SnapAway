@@ -29,6 +29,8 @@ from pathlib import Path
 
 LANGS = ["en-us", "pt", "ar", "de", "es", "fr", "ja", "ko", "zh-cn", "hi"]
 MAX_SEARCH_TERM = 30
+MAX_CAPTION = 200
+MAX_RELEASE_NOTES = 1500
 
 # ---------------------------------------------------------------- conteudo novo
 
@@ -118,13 +120,8 @@ HINDI = {
     "ShortDescription":
         "निजी ऐप्स खुले रह जाने पर कभी पकड़े न जाएं। एक शॉर्टकट से ऐप्स स्क्रीन, टास्कबार और "
         "Alt+Tab से तुरंत गायब — कुछ बंद किए बिना, बिना तनाव।",
-    "ReleaseNotes": "\n".join([
-        "• Windows शट डाउन, रीस्टार्ट या साइन आउट के समय ऐप हैंग होने की समस्या ठीक की गई",
-        "• तेज़ और भरोसेमंद एग्ज़िट — बैकग्राउंड ऑडियो क्लीनअप अब बंद होने को नहीं रोकता",
-        "• ऐप बंद करने के तुरंत बाद हो सकने वाला दुर्लभ क्रैश ठीक किया गया",
-        "• सामान्य एग्ज़िट के बाद ऐप अब गलती से ग्राफ़िक्स एक्सेलेरेशन बंद नहीं करता",
-        "• विकल्प में अब \"परिचय\" के बजाय अपने आइकन के साथ सहायता दिखती है",
-    ]),
+    # As notas de versao sairam daqui: agora ficam em RELEASE_NOTES, unica fonte
+    # para os 10 idiomas (inclusive o hindi). Ver o passo 9 em main().
     "Description": """निजी ऐप्स खुले रह जाने पर कभी पकड़े न जाएं।
 
 SnapAway आपको Windows पर एक ही शॉर्टकट से ऐप्स तुरंत छुपाने देता है। जैसे ही कोई कमरे में आता है, चुने हुए सभी ऐप्स डेस्कटॉप, टास्कबार और Alt+Tab से गायब हो जाते हैं — और सुरक्षित होते ही उतनी ही तेज़ी से वापस आ जाते हैं।
@@ -143,12 +140,6 @@ SnapAway आपको Windows पर एक ही शॉर्टकट से 
 
 एक बार की खरीद। कोई सदस्यता नहीं।""",
     "DesktopScreenshotCaption1": "एक ही कुंजी से अपने सभी ऐप्स तुरंत छुपाएं",
-    "DesktopScreenshotCaption2":
-        "निचले दाएं कोने में डिस्क्रीट फ्लोटिंग बटन (वैकल्पिक) — हमेशा पहुंच में",
-    "DesktopScreenshotCaption3": "लाइट और डार्क थीम",
-    "DesktopScreenshotCaption4": "अपना शॉर्टकट और प्राइवेसी सेटिंग्स बदलें",
-    "DesktopScreenshotCaption5":
-        "विंडो वापस लाने के लिए Ctrl+F6, व्यवहार पूरी तरह सेट करने योग्य",
     "Feature1": "इंस्टेंट हाइड शॉर्टकट: एक कुंजी दबाकर चुने हुए सभी ऐप्स छुपाएं",
     "Feature2": "बंद करने की ज़रूरत नहीं: ऐप्स सुरक्षित रूप से बैकग्राउंड में चलते रहते हैं",
     "Feature3": "पूरी तरह अदृश्य: ऐप्स डेस्कटॉप, टास्कबार और Alt+Tab से हट जाते हैं",
@@ -161,6 +152,109 @@ SnapAway आपको Windows पर एक ही शॉर्टकट से 
 }
 
 TITLE_FIX = {"ja": "SnapAway"}
+
+# Legendas dos screenshots 2..5.
+#
+# O export traz uma ORDEM diferente por idioma: as seis permutacoes de "botao
+# flutuante", "temas" e "personalizar" aparecem (pt = temas/customizar/flutuante,
+# ar e de = customizar/flutuante/temas, es = customizar/temas/flutuante, fr =
+# flutuante/customizar/temas, ko = temas/flutuante/customizar). Como os cinco
+# screenshots sao os mesmos arquivos em todos os idiomas, as legendas 2..4 sao
+# reescritas na ordem do `en-us`: 2 = botao flutuante, 3 = temas, 4 = personalizar.
+#
+# A legenda 5 estava corrompida no export em 8 idiomas: o texto foi quebrado na
+# virgula e vazou uma coluna para a direita (o pt terminava no ar, o ar no de, o
+# de no es, o es no ja, o fr no zh-cn) e o final de cada um se perdeu. Reescrita
+# aqui, e de proposito SEM virgulas, para nao repetir o problema em editores que
+# tratam virgula como separador de campo.
+CAPTION_FLOATING = {
+    "en-us": "Discreet floating button in the lower right corner (optional) — always within reach",
+    "pt": "Botão flutuante discreto no canto inferior direito (opcional) — sempre ao alcance",
+    "ar": "زر عائم غير ملحوظ في الزاوية السفلية اليمنى (اختياري) — دائمًا في متناول يدك",
+    "de": "Unauffälliger schwebender Button in der unteren rechten Ecke (optional) — immer griffbereit",
+    "es": "Botón flotante discreto en la esquina inferior derecha (opcional) — siempre a mano",
+    "fr": "Bouton flottant discret dans le coin inférieur droit (facultatif) — toujours à portée de main",
+    "ja": "右下の目立たないフローティングボタン（オプション）— いつでも手の届く場所に",
+    "ko": "오른쪽 아래 구석의 눈에 띄지 않는 플로팅 버튼(선택 사항) — 언제든 손이 닿는 곳에",
+    "zh-cn": "右下角的隐蔽悬浮按钮（可选）— 随时触手可及",
+    "hi": "निचले दाएं कोने में डिस्क्रीट फ्लोटिंग बटन (वैकल्पिक) — हमेशा पहुंच में",
+}
+
+CAPTION_THEMES = {
+    "en-us": "Light and dark themes",
+    "pt": "Temas claro e escuro",
+    "ar": "سمات فاتحة وداكنة",
+    "de": "Helle und dunkle Designs",
+    "es": "Temas claro y oscuro",
+    "fr": "Thèmes clair et sombre",
+    "ja": "ライト/ダークテーマ",
+    "ko": "라이트/다크 테마",
+    "zh-cn": "浅色和深色主题",
+    "hi": "लाइट और डार्क थीम",
+}
+
+CAPTION_CUSTOMIZE = {
+    "en-us": "Customize your shortcut and privacy settings",
+    "pt": "Personalize seu atalho e suas configurações de privacidade",
+    "ar": "خصص اختصارك وإعدادات الخصوصية",
+    "de": "Passe deinen Shortcut und deine Datenschutzeinstellungen an",
+    "es": "Personaliza tu atajo y tu configuración de privacidad",
+    "fr": "Personnalisez votre raccourci et vos paramètres de confidentialité",
+    "ja": "ショートカットとプライバシー設定を自由にカスタマイズ",
+    "ko": "단축키와 개인정보 설정을 자유롭게 맞춤 설정",
+    "zh-cn": "自由自定义快捷键和隐私设置",
+    "hi": "अपना शॉर्टकट और प्राइवेसी सेटिंग्स बदलें",
+}
+
+CAPTION_RESTORE = {
+    "en-us": "Use Ctrl+F6 to restore your windows — behavior is highly configurable",
+    "pt": "Use Ctrl+F6 para restaurar suas janelas — comportamento altamente configurável",
+    "ar": "استخدم Ctrl+F6 لاستعادة نوافذك — مع سلوك قابل للتخصيص بدرجة كبيرة",
+    "de": "Verwende Ctrl+F6 um deine Fenster wiederherzustellen — hochgradig konfigurierbares Verhalten",
+    "es": "Usa Ctrl+F6 para restaurar tus ventanas — comportamiento altamente configurable",
+    "fr": "Utilisez Ctrl+F6 pour restaurer vos fenêtres — comportement hautement configurable",
+    "ja": "Ctrl+F6 でウィンドウを復元 — 動作は高度にカスタマイズ可能",
+    "ko": "Ctrl+F6으로 창 복원 — 동작을 자유롭게 설정 가능",
+    "zh-cn": "使用 Ctrl+F6 恢复窗口 — 行为高度可配置",
+    "hi": "विंडो वापस लाने के लिए Ctrl+F6 — व्यवहार पूरी तरह अनुकूलन योग्य",
+}
+
+
+# Notas da versao 1.2.5 (`ReleaseNotes`). Substituem integralmente o texto de
+# 1.2.4 que vem no export — notas antigas descrevem correcoes que o usuario desta
+# versao ja tem, e a Store mostra apenas as notas da versao publicada.
+RELEASE_NOTES = {
+    "en-us": """• New guided tour: you pick the window to hide and learn both shortcuts by pressing the real keys — the tour only advances after the correct key
+• Clear notice when no target window is selected, instead of hiding nothing
+• 18 missing texts are now translated in all 19 languages""",
+    "pt": """• Novo tour guiado: você escolhe a janela a ocultar e aprende os dois atalhos apertando as teclas de verdade — o tour só avança com a tecla certa
+• Aviso claro quando nenhuma janela-alvo está selecionada, em vez de não ocultar nada
+• 18 textos que faltavam agora estão traduzidos nos 19 idiomas""",
+    "ar": """• جولة إرشادية جديدة: تختار النافذة المراد إخفاؤها وتتعلم الاختصارين بالضغط على المفاتيح فعليًا — لا تتقدم الجولة إلا بالمفتاح الصحيح
+• تنبيه واضح عند عدم تحديد نافذة هدف بدلًا من عدم إخفاء أي شيء
+• ترجمة 18 نصًا كان ناقصًا في جميع اللغات الـ19""",
+    "de": """• Neue geführte Tour: du wählst das Fenster zum Verstecken und lernst beide Tastenkombinationen durch echtes Drücken — weiter geht es erst mit der richtigen Taste
+• Klarer Hinweis, wenn kein Zielfenster ausgewählt ist, statt nichts zu verstecken
+• 18 fehlende Texte sind jetzt in allen 19 Sprachen übersetzt""",
+    "es": """• Nuevo recorrido guiado: eliges la ventana que quieres ocultar y aprendes los dos atajos pulsando las teclas de verdad — solo avanza con la tecla correcta
+• Aviso claro cuando no hay ninguna ventana objetivo seleccionada, en lugar de no ocultar nada
+• 18 textos que faltaban ya están traducidos en los 19 idiomas""",
+    "fr": """• Nouveau tutoriel guidé : vous choisissez la fenêtre à masquer et apprenez les deux raccourcis en appuyant réellement sur les touches — il n'avance qu'avec la bonne touche
+• Avertissement clair lorsqu'aucune fenêtre cible n'est sélectionnée, au lieu de ne rien masquer
+• 18 textes manquants sont désormais traduits dans les 19 langues""",
+    "ja": """• 新しいガイド付きツアー：隠すウィンドウを選び、実際にキーを押して 2 つのショートカットを覚えます — 正しいキーを押すまで先に進みません
+• 対象ウィンドウが未選択のときは、何も隠さずに終わる代わりに分かりやすい通知を表示
+• 不足していた 18 個のテキストを 19 言語すべてに翻訳しました""",
+    "ko": """• 새 단계별 안내: 숨길 창을 고르고 실제 키를 눌러 두 단축키를 익힙니다 — 올바른 키를 눌러야 다음으로 진행됩니다
+• 대상 창이 선택되지 않았을 때 아무것도 숨기지 않고 끝나는 대신 명확한 안내를 표시
+• 빠져 있던 18개 문구를 19개 언어 모두에 번역했습니다""",
+    "zh-cn": """• 新增引导教程：选择要隐藏的窗口，并通过实际按键学习两个快捷键 — 只有按对键才会继续
+• 未选择目标窗口时会显示明确提示，而不是什么都不隐藏
+• 补齐了 19 种语言中缺失的 18 条文本""",
+    "hi": """• नया गाइडेड टूर: आप छिपाने के लिए विंडो चुनते हैं और असली कुंजियाँ दबाकर दोनों शॉर्टकट सीखते हैं — सही कुंजी दबाने पर ही टूर आगे बढ़ता है
+• कोई टारगेट विंडो चुनी हुई न होने पर कुछ न छिपाने के बजाय साफ़ सूचना दिखती है
+• छूटे हुए 18 टेक्स्ट अब सभी 19 भाषाओं में अनुवादित हैं""",
+}
 
 
 # ---------------------------------------------------------------- manipulacao
@@ -277,6 +371,31 @@ def main():
             if (row.get("hi") or "").strip() != value:
                 changes.append((f"{name}[hi]", (row.get("hi") or "").strip(), value))
                 row["hi"] = value
+
+    # 8. legendas dos screenshots 2..5 (ordem por idioma + legenda 5 corrompida no export)
+    for lang in LANGS:
+        if lang not in CAPTION_THEMES:
+            continue
+        for name, value in (
+            ("DesktopScreenshotCaption2", CAPTION_FLOATING[lang]),
+            ("DesktopScreenshotCaption3", CAPTION_THEMES[lang]),
+            ("DesktopScreenshotCaption4", CAPTION_CUSTOMIZE[lang]),
+            ("DesktopScreenshotCaption5", CAPTION_RESTORE[lang]),
+        ):
+            assert len(value) <= MAX_CAPTION, f"{name}[{lang}]: {len(value)}"
+            row = by_field[name]
+            if (row.get(lang) or "").strip() != value:
+                changes.append((f"{name}[{lang}]", (row.get(lang) or "").strip(), value))
+                row[lang] = value
+
+    # 9. notas da versao 1.2.5
+    for lang in LANGS:
+        value = RELEASE_NOTES[lang].strip()
+        assert len(value) <= MAX_RELEASE_NOTES, f"ReleaseNotes[{lang}]: {len(value)}"
+        row = by_field["ReleaseNotes"]
+        if (row.get(lang) or "").strip() != value:
+            changes.append((f"ReleaseNotes[{lang}]", (row.get(lang) or "").strip(), value))
+            row[lang] = value
 
     out = Path(__file__).resolve().parent / "listingData-optimized.csv"
     with out.open("w", encoding="utf-8-sig", newline="") as fh:

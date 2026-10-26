@@ -137,6 +137,9 @@ O app em si já está traduzido para **20 idiomas** (`src/language/texts.json`):
 | 9 | `DesktopScreenshot1..5` | todos | **5 de 30 slots usados.** Nenhum par antes/depois, nenhum shot do que o Pro desbloqueia |
 | 10 | `Description` | todos | O bloco comercial (grátis/Pro/compra única) é o **penúltimo/último** parágrafo — abaixo da dobra |
 | 11 | `MobileScreenshot*`, `XboxScreenshot*`, `SurfaceHub*` | — | Vazios; irrelevante para app de PC |
+| 12 | `DesktopScreenshotCaption2..4` | pt, ar, de, es, fr, ko, zh-cn | **Legenda no screenshot errado.** A ordem dos 3 screenshots do meio é diferente em cada idioma: aparecem todas as 6 permutações de "botão flutuante", "temas" e "personalizar". Como os 5 arquivos de imagem são os mesmos, a legenda só casa com a imagem em `en-us` e `ja` |
+| 13 | `DesktopScreenshotCaption5` | pt, ar, de, es, fr, ja, ko, zh-cn | **Texto corrompido**: a legenda foi quebrada na vírgula e vazou uma coluna para a direita (o final do `pt` está no `ar`, o `ar` no `de`, o `de` no `es`, o `es` no `ja`, o `fr` no `zh-cn`). Nenhum desses 8 idiomas exibe a legenda correta; `ja`, `ko` e `zh-cn` ficaram sem o texto de restaurar |
+| 14 | `ReleaseNotes` | todos os 10 | **Notas de 1.2.4 numa submissão de 1.2.5.** As notas descrevem correções de encerramento/GPU que quem instalar a versão nova já tem, e a Store só mostra as notas da versão publicada |
 
 ### O que está bom (não mexer)
 
@@ -155,7 +158,7 @@ O app em si já está traduzido para **20 idiomas** (`src/language/texts.json`):
 | 3 | Índia sem idioma | 501 instalações / listagem em `hi` só agora preenchida (app já tinha `hi`) | listagem (import pendente) + app |
 | 4 | 137 tentativas perdidas | 122 anulações + 15 falhas | app (tamanho do pacote, tempo até a 1ª janela) |
 | 5 | Visibilidade em declínio suave | 150–180 → ~120 exibições/dia | cadência de release |
-| 6 | Higiene da listagem | itens 1–11 da seção 6 | listagem |
+| 6 | Higiene da listagem | itens 1–8, 10 e 12–14 da seção 6 | listagem |
 
 ### 7.1 O que isso pede no app
 
@@ -176,8 +179,9 @@ investir em campanhas pagas da Store (1 instalação em 5 campanhas).
 
 ### 7.2 Artefato gerado
 
-`docs/store-listing/listingData-optimized.csv` aplica os itens 1–8 da seção 6 (**34 células**:
-30 do híndi + `TrailerToPlayAtTopOfListing` em `en-us, es, fr, ko`).
+`docs/store-listing/listingData-optimized.csv` aplica os itens 1–8, 10 e 12–14 da seção 6
+(**70 células**: 32 legendas de screenshot, 10 `ReleaseNotes`, 4 de `TrailerToPlayAtTopOfListing`,
+10 `Feature1..10`, 7 `SearchTerm1..7` e 7 campos de texto do `hi`).
 Instruções de import e o bloco em híndi em [store-listing/README.md](store-listing/README.md).
 
 ## 8. Limitações desta análise
