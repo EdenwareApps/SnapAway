@@ -59,13 +59,16 @@
     }
   }
   
+  // A página /snapaway/#faq é a que existe: /snapaway/help responde 404.
+  const HELP_URL = 'https://edenware.app/snapaway/#faq';
+
   function openWebsite(event) {
     event.preventDefault();
     if (window.api && window.api.launchUrl) {
-      window.api.launchUrl('https://edenware.app/snapaway/help');
+      window.api.launchUrl(HELP_URL);
     } else {
       // Fallback to opening in new tab
-      window.open('https://edenware.app/snapaway/help', '_blank');
+      window.open(HELP_URL, '_blank');
     }
   }
 </script>
