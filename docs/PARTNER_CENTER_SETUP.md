@@ -6,6 +6,7 @@
 - [x] App registered in Partner Center.
 - [x] IAP product `SnapAwayPro` created as Durable.
 - [x] IAP listing content configured (EN/PT), pricing configured, and submission prepared.
+- [x] IAP listing preenchido nos 10 idiomas da listagem do app (`hi` incluído, 26/10/2026).
 - [x] Local build completed successfully (`npm run build`).
 - [x] Project version set to `0.9.0` for first private app-parent submission.
 
@@ -43,7 +44,12 @@ This is a common Store restriction: the store listing name must be unique across
 - Type: Durable
 - Title: SnapAway Pro Lifetime
 - Description: Lifetime access to all Pro features
-- Markets: BR, US, CA (and others as needed)
+- Markets: **240 mercados** (o plano original de BR/US/CA está obsoleto — o add-on já foi ampliado)
+- Price: base **US$ 14,99** definida em 26/10/2026 (antes US$ 29,99 com promoção eterna de 60%). O
+  preço por mercado foi preenchido junto na mesma rodada. As duas únicas vendas do histórico saíram
+  a US$ 11,99 — a base de 29,99 nunca foi paga e criava um penhasco de +150% no fim da promoção.
+- Listing: 10 idiomas (`en-us`, `hi`, `pt`, `ar`, `zh`, `fr`, `de`, `ja`, `ko`, `es`).
+  O CSV é gerado por `docs/store-listing/optimize-addon-listing.py`
 
 ## Notes
 

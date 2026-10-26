@@ -63,7 +63,8 @@ Limites (doc MS):
 
 | Campo | Limite |
 | --- | --- |
-| Description | 10.000 chars — **não aceita URL nem HTML** |
+| Description | 10.000 chars na **listagem do app** — **não aceita URL nem HTML** |
+| Description (add-on / IAP) | **200 chars** — ver a armadilha abaixo |
 | What's new / ReleaseNotes | 1.500 chars (deixar **vazio na primeira** submissão) |
 | Feature1..Feature20 | ≤ 200 chars cada (sem bullets próprios) |
 | ShortTitle | 50 chars |
@@ -83,6 +84,32 @@ Regras medidas na prática:
   `apps.microsoft.com/detail/<StoreId>`). Se o reservado não bate com o nome do produto, a
   célula `Title` muda.
 - Valide limites **no gerador**, antes de gravar (contagem por campo).
+
+### A mensagem de limite mente (bug do Partner Center)
+
+> `Description is too long (must be 10000 characters or fewer).`
+
+Medido em 26/10/2026 na listagem do add-on `SnapAwayPro` (`9NNLVZPCLLTZ`): o limite real do
+`Description` de um IAP é **200 caracteres**, não 10.000. As 6 descrições acima de 200 foram
+rejeitadas com essa mensagem e as 4 abaixo (74 a 174 chars) passaram, sem nenhuma outra diferença
+no arquivo:
+
+| Idioma | chars | Import |
+| --- | --- | --- |
+| `fr` | 249 | rejeitado |
+| `es` | 246 | rejeitado |
+| `pt` | 241 | rejeitado |
+| `de` | 222 | rejeitado |
+| `hi` | 212 | rejeitado |
+| `en-us` | 207 | rejeitado |
+| `ar` | 174 | aceito |
+| `ko` | 116 | aceito |
+| `ja` | 114 | aceito |
+| `zh` | 74 | aceito |
+
+O corte é exatamente em 200, então **não confie no número da mensagem** — meça o campo e deixe
+margem (`optimize-addon-listing.py` aborta acima de 200). A mensagem repete o limite da listagem
+do app, que é o campo homônimo de outro tipo de listagem.
 
 > Exemplo de regra de produto (não confundir com regra da Store): SnapAway FREE oculta **até
 > 2 apps** e PRO é pagamento único vitalício. Nunca escrever "3 apps".

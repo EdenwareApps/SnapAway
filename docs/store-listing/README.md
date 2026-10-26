@@ -9,6 +9,8 @@ de aquisição do Partner Center — ver [STORE_ANALYTICS.md](../STORE_ANALYTICS
 |---|---|
 | `listingData-optimized.csv` | Export **atual** da submissão `1152921505702228504` (já com o idioma `hi` importado) com as otimizações abaixo aplicadas — **31 células alteradas** em relação a ele. Mesmo header, mesmas 453 linhas, mesmos `ID`/`Type`/`default` — pronto para reimportar |
 | `optimize-listing.py` | Script que gera o CSV acima a partir do export original. Reexecutável quando a listagem mudar |
+| `addonListingData-optimized.csv` | Export da submissão `1152921505702237352` **do add-on** `SnapAwayPro` (`9NNLVZPCLLTZ`) com `Title`, `Description` e `StoreLogo300x300` nos 10 idiomas — **28 células alteradas** |
+| `optimize-addon-listing.py` | Script que gera o CSV do add-on. O prefixo das URLs de mídia é lido da célula `en-us` do export, então ele sobrevive à troca de submissão |
 | `README.md` | Este arquivo, incluindo o conteúdo em híndi (`hi`) que o script agora preenche |
 
 Regenerar:
@@ -73,6 +75,31 @@ screenshots do `hi`).
 2. **Listagem** → menu **⋯** → **Importar listagem** → selecionar `listingData-optimized.csv`.
 3. Conferir o resumo do import (deve reportar 453 linhas) e revisar visualmente `en-us` e `pt`.
 4. Enviar para certificação.
+
+## Listagem do add-on (`SnapAwayPro`)
+
+O add-on tem listagem própria e ela é **independente** da listagem do app — o paywall lê título e
+descrição da Store no locale do usuário, então antes disso o card Pro aparecia em inglês no meio de
+uma interface traduzida.
+
+- Só três campos: `Title`, `Description` e `StoreLogo300x300`. O resto do template vem em branco.
+- **`Description` tem limite de 200 caracteres** (não 10.000 — a mensagem de erro do Partner Center
+  mostra o número errado; ver [STORE_LISTING_IMPORT_ERRORS.md](../STORE_LISTING_IMPORT_ERRORS.md)
+  §2). O script aborta se algum idioma passar disso.
+- 10 colunas de idioma: `en-us`, `hi`, `pt`, `ar`, `zh`, `fr`, `de`, `ja`, `ko`, `es`. Aqui o
+  Partner Center usa **`zh`**, não `zh-cn` como na listagem do app.
+- Todo idioma adicionado nasce **vazio** — nada é herdado do `en-us`. Por isso o script preenche os
+  três campos em todos eles.
+- `StoreLogo300x300` é um ativo compartilhado: a mesma URL do `en-us` vale para todos os idiomas,
+  mesmo mecanismo aceito na listagem do app.
+- A `Description` do `en-us` prometia `future Snapcover improvements` (nome do repositório, não do
+  produto) e foi reescrita com a lista real de recursos Pro.
+
+Regenerar:
+
+```powershell
+python docs\store-listing\optimize-addon-listing.py "$env:USERPROFILE\Downloads\listingData-9NNLVZPCLLTZ-<submission>.csv"
+```
 
 ## Híndi (`hi`) — preenchido pelo script
 
