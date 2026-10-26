@@ -111,12 +111,16 @@ Não há sinal para investir em aquisição paga via campanhas da Store. Todo o 
 
 ## 6. Auditoria da listagem (CSV)
 
-Idiomas presentes: `en-us, pt, ar, de, es, fr, ja, ko, zh-cn` (**9**).
+Idiomas presentes: `en-us, pt, ar, de, es, fr, ja, ko, zh-cn, hi` (**10**).
 
 O app em si já está traduzido para **20 idiomas** (`src/language/texts.json`):
 `en, ar, cs, de, el, es, fr, hi, hu, it, ja, ko, nl, pl, pt, ru, sv, th, tr, zh`.
 
-**11 idiomas do app não existem na listagem:** `cs, el, hi, hu, it, nl, pl, ru, sv, th, tr`.
+**10 idiomas do app não existem na listagem:** `cs, el, hu, it, nl, pl, ru, sv, th, tr`.
+
+`hi` foi adicionado ao Partner Center e o export passou a trazer a coluna vazia; o
+`optimize-listing.py` preenche os 30 campos (ver seção "Híndi" do
+[README da listagem](store-listing/README.md)).
 
 ### Defeitos encontrados
 
@@ -148,7 +152,7 @@ O app em si já está traduzido para **20 idiomas** (`src/language/texts.json`):
 |---|---|---|---|
 | 1 | Conversão para compra 0,29% | 2 compras / ~690 instalações | app (paywall, preço localizado) + listagem (Pro visível) |
 | 2 | 40% instalam e nunca abrem | 2.070 → 1.240 | **app** (onboarding, atalho, auto-start) |
-| 3 | Índia sem idioma | 501 instalações / 0 listagem em `hi` (app já tem `hi`) | listagem + app |
+| 3 | Índia sem idioma | 501 instalações / listagem em `hi` só agora preenchida (app já tinha `hi`) | listagem (import pendente) + app |
 | 4 | 137 tentativas perdidas | 122 anulações + 15 falhas | app (tamanho do pacote, tempo até a 1ª janela) |
 | 5 | Visibilidade em declínio suave | 150–180 → ~120 exibições/dia | cadência de release |
 | 6 | Higiene da listagem | itens 1–11 da seção 6 | listagem |
@@ -172,7 +176,8 @@ investir em campanhas pagas da Store (1 instalação em 5 campanhas).
 
 ### 7.2 Artefato gerado
 
-`docs/store-listing/listingData-optimized.csv` aplica os itens 1–5 e 8 da seção 6 (76 células).
+`docs/store-listing/listingData-optimized.csv` aplica os itens 1–8 da seção 6 (**34 células**:
+30 do híndi + `TrailerToPlayAtTopOfListing` em `en-us, es, fr, ko`).
 Instruções de import e o bloco em híndi em [store-listing/README.md](store-listing/README.md).
 
 ## 8. Limitações desta análise

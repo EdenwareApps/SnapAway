@@ -13,6 +13,9 @@ Mudancas aplicadas (ver docs/STORE_ANALYTICS.md, secao 6):
                           falha com "The value you provided is not valid"
   6. Title (ja)       -> precisa ser um nome de produto reservado; o sufixo em japones
                           e rejeitado com "must be one of your reserved product names"
+  7. hi               -> preenche o idioma hindi inteiro (o Partner Center cria a coluna
+                          vazia ao adicionar o idioma; o Title fica "SnapAway" porque o
+                          nome reservado em hindi ainda nao tem traducao)
 
 Uso:
     python docs/store-listing/optimize-listing.py <caminho-do-csv-original>
@@ -24,7 +27,7 @@ import re
 import sys
 from pathlib import Path
 
-LANGS = ["en-us", "pt", "ar", "de", "es", "fr", "ja", "ko", "zh-cn"]
+LANGS = ["en-us", "pt", "ar", "de", "es", "fr", "ja", "ko", "zh-cn", "hi"]
 MAX_SEARCH_TERM = 30
 
 # ---------------------------------------------------------------- conteudo novo
@@ -65,6 +68,8 @@ FEATURE10 = {
           "일회성 구매, 구독 없음",
     "zh-cn": "免费版：最多隐藏 2 个应用 · Pro Lifetime：应用无限制 · "
              "一次性购买，无订阅",
+    "hi": "मुफ़्त: 2 ऐप्स तक छुपाएं · Pro Lifetime: असीमित ऐप्स · "
+          "एक बार की खरीद, कोई सदस्यता नहीं",
 }
 
 SEARCH_TERMS = {
@@ -91,6 +96,68 @@ SEARCH_TERMS = {
            "앱 즉시 숨기기", "패닉 버튼", "작업 표시줄 숨기기", "화면 숨기기"],
     "zh-cn": ["隐藏应用 Windows", "隐藏窗口 快捷键", "Boss Key Windows",
               "快速隐藏应用", "老板键", "隐藏任务栏", "老板来了"],
+    "hi": ["ऐप छुपाने वाला ऐप", "विंडो छुपाएं शॉर्टकट", "बॉस की विंडो",
+           "टास्कबार छुपाएं", "प्राइवेसी स्क्रीन", "boss key windows",
+           "chhupane wala app"],
+}
+
+# Idioma hindi: a coluna nasce vazia quando o idioma e adicionado no Partner Center.
+# Os links do edenware.app para /snapaway/hi/ ainda nao existem (404), entao o EULA
+# aponta para a versao em ingles. Features 1..9 ficam aqui; Feature10 e SearchTerm1..7
+# vem de FEATURE10/SEARCH_TERMS, que ja rodam para todos os idiomas de LANGS.
+HINDI = {
+    "Title": "SnapAway",
+    "ShortTitle": "SnapAway",
+    "VoiceTitle": "SnapAway",
+    "DevStudio": "Edenware — https://edenware.app",
+    "CopyrightTrademarkInformation":
+        "© 2026 Edenware. SnapAway, Edenware का ट्रेडमार्क है। सर्वाधिकार सुरक्षित।",
+    "AdditionalLicenseTerms":
+        "इस उत्पाद को इंस्टॉल या उपयोग करके आप Edenware की सेवा शर्तों और EULA से सहमत होते हैं। "
+        "विवरण: https://edenware.app/snapaway/en/",
+    "ShortDescription":
+        "निजी ऐप्स खुले रह जाने पर कभी पकड़े न जाएं। एक शॉर्टकट से ऐप्स स्क्रीन, टास्कबार और "
+        "Alt+Tab से तुरंत गायब — कुछ बंद किए बिना, बिना तनाव।",
+    "ReleaseNotes": "\n".join([
+        "• Windows शट डाउन, रीस्टार्ट या साइन आउट के समय ऐप हैंग होने की समस्या ठीक की गई",
+        "• तेज़ और भरोसेमंद एग्ज़िट — बैकग्राउंड ऑडियो क्लीनअप अब बंद होने को नहीं रोकता",
+        "• ऐप बंद करने के तुरंत बाद हो सकने वाला दुर्लभ क्रैश ठीक किया गया",
+        "• सामान्य एग्ज़िट के बाद ऐप अब गलती से ग्राफ़िक्स एक्सेलेरेशन बंद नहीं करता",
+        "• विकल्प में अब \"परिचय\" के बजाय अपने आइकन के साथ सहायता दिखती है",
+    ]),
+    "Description": """निजी ऐप्स खुले रह जाने पर कभी पकड़े न जाएं।
+
+SnapAway आपको Windows पर एक ही शॉर्टकट से ऐप्स तुरंत छुपाने देता है। जैसे ही कोई कमरे में आता है, चुने हुए सभी ऐप्स डेस्कटॉप, टास्कबार और Alt+Tab से गायब हो जाते हैं — और सुरक्षित होते ही उतनी ही तेज़ी से वापस आ जाते हैं।
+
+मुफ़्त संस्करण में एक बार में 2 ऐप्स तक छुपाए जा सकते हैं।
+असीमित ऐप्स और उन्नत सुविधाओं के लिए Pro Lifetime में अपग्रेड करें। कोई सदस्यता नहीं।
+
+प्रोग्राम बंद करने या अपना काम खोने की ज़रूरत नहीं। SnapAway सब कुछ सुरक्षित रूप से बैकग्राउंड में चलाता रहता है, ताकि नियंत्रण हमेशा आपके पास रहे।
+
+चुने हुए ऐप्स तुरंत छुपाने के लिए F6 दबाएं। उन्हें फिर दिखाने के लिए Ctrl+F6 दबाएं।
+
+उन पलों के लिए बिल्कुल सही जब निजता ज़रूरी हो: काम, पढ़ाई, वीडियो देखना या अजीब स्थितियों से बचना।
+
+पलक झपकते ही ध्यान भटकाने वाली चीज़ें गायब।
+शांत रहें। निजी रहें। नियंत्रण में रहें — तुरंत।
+
+एक बार की खरीद। कोई सदस्यता नहीं।""",
+    "DesktopScreenshotCaption1": "एक ही कुंजी से अपने सभी ऐप्स तुरंत छुपाएं",
+    "DesktopScreenshotCaption2":
+        "निचले दाएं कोने में डिस्क्रीट फ्लोटिंग बटन (वैकल्पिक) — हमेशा पहुंच में",
+    "DesktopScreenshotCaption3": "लाइट और डार्क थीम",
+    "DesktopScreenshotCaption4": "अपना शॉर्टकट और प्राइवेसी सेटिंग्स बदलें",
+    "DesktopScreenshotCaption5":
+        "विंडो वापस लाने के लिए Ctrl+F6, व्यवहार पूरी तरह सेट करने योग्य",
+    "Feature1": "इंस्टेंट हाइड शॉर्टकट: एक कुंजी दबाकर चुने हुए सभी ऐप्स छुपाएं",
+    "Feature2": "बंद करने की ज़रूरत नहीं: ऐप्स सुरक्षित रूप से बैकग्राउंड में चलते रहते हैं",
+    "Feature3": "पूरी तरह अदृश्य: ऐप्स डेस्कटॉप, टास्कबार और Alt+Tab से हट जाते हैं",
+    "Feature4": "तेज़ रिस्टोर: सब कुछ तुरंत वापस",
+    "Feature5": "पासवर्ड सुरक्षा: अनधिकृत पहुंच रोकें",
+    "Feature6": "साइलेंट मोड: ऐप्स छुपे होने पर ऑडियो म्यूट करें",
+    "Feature7": "ऑटो-स्टार्ट: जब ज़रूरत हो, हमेशा तैयार",
+    "Feature8": "हल्का: तेज़ और कम संसाधन उपयोग",
+    "Feature9": "F6 से ऐप्स छुपाएं; Ctrl+F6 से सब कुछ वापस लाएं",
 }
 
 TITLE_FIX = {"ja": "SnapAway"}
@@ -199,6 +266,17 @@ def main():
         row = by_field["Title"]
         changes.append((f"Title[{lang}]", (row.get(lang) or "").strip(), title))
         row[lang] = title
+
+    # 7. idioma hindi (so existe no export depois de o idioma ser adicionado na Store)
+    if "hi" in fieldnames:
+        for name, value in HINDI.items():
+            row = by_field.get(name)
+            if row is None:
+                continue
+            value = value.strip()
+            if (row.get("hi") or "").strip() != value:
+                changes.append((f"{name}[hi]", (row.get("hi") or "").strip(), value))
+                row["hi"] = value
 
     out = Path(__file__).resolve().parent / "listingData-optimized.csv"
     with out.open("w", encoding="utf-8-sig", newline="") as fh:
