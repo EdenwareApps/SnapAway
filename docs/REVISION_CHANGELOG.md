@@ -1,4 +1,35 @@
 # Changelog - Revisão de Implementação Microsoft Store
+## 🚀 1.2.5 (25 de Outubro de 2026)
+
+Bump `1.2.4 → 1.2.5` para transformar o primeiro uso (e o uso de quem aperta o atalho sem alvo) em algo **compreensível**: um tour guiado que só avança com a tecla física pressionada, um aviso quando não há janela-alvo selecionada e a tradução completa das 18 chaves que faltavam nos 19 idiomas.
+
+### 1. Onboarding guiado exige a janela-alvo e a tecla física
+
+- Antes o primeiro uso abria direto na lista, sem explicar o fluxo: o usuário novo apertava o atalho sem nenhuma janela marcada, nada acontecia e o app parecia quebrado.
+- Agora o tour tem passos explícitos (`onboardingStep` em `src/renderer/App.svelte`): **1** escolher a janela-alvo entre as mesmas janelas que o app oculta, **2** aprender a ocultar, **3** aprender a restaurar, **4** concluir.
+- Nos passos 2 e 3 o app **pausa os atalhos globais** (`beginOnboardingPractice`) e escuta o teclado da própria janela, então a tecla precisa ser pressionada de verdade: `matchesAccelerator()` em `src/renderer/utils/accelerator.mjs` compara o evento com o atalho configurado. Não existe "próximo" manual — a única forma de avançar é acertar a tecla.
+- No passo 2 a janela-alvo é ocultada de fato e restaurada ao fim do passo 3 (`onboardingDemoHidden`), então o efeito é visto na prática, e não só descrito.
+- Saída de emergência: depois de **3 teclas erradas** aparece "Agora não" (`onboardingMisses >= 3`) — cobre teclado sem F6 e tecla capturada por outro app. Ao sair, os atalhos globais são sempre religados (`endOnboardingPractice`) e a janela de demonstração é restaurada.
+- Novos eventos: `onboarding_target_selected`, `onboarding_hide_key_learned`, `onboarding_show_key_learned`, `onboarding_practice_skipped`, `onboarding_completed` — permitem ver no Partner Center exatamente em qual passo as pessoas param.
+- Testes: `npm run test:accelerator` (`scripts/test-accelerator.mjs`).
+
+### 2. Aviso ao ocultar sem janela-alvo
+
+- O caminho `handleHideWithoutFilters()` em `src/main/index.js` já existia, mas era silencioso: forçava o modo principal (`uiMode`) e não explicava nada.
+- Agora ele envia `showToastInMainWindow()` (IPC `show-toast` → `showToast()` em `src/renderer/App.svelte`) com a nova chave `TOAST_NO_TARGET`: "Nenhuma janela selecionada ainda — escolha uma na lista". O toast tem tom de aviso e 4,5 s.
+- O texto novo vem traduzido nos 19 idiomas, junto com as demais chaves.
+
+### 3. Tradução completa das 18 chaves ausentes
+
+- Os textos do onboarding, do toast, do upsell e da faixa de atualização estrearam em português e caíam no fallback em inglês nos outros idiomas. As 18 chaves foram traduzidas nos **19 idiomas** de `src/language/texts.json`.
+- `npm run test:languages` (`scripts/test-languages.js`) falha o build se qualquer idioma ficar sem uma chave ou se as chaves de documentação (Placeholders) ficarem desalinhadas — a lacuna não volta silenciosamente.
+
+### 4. Listagem da Store (arquivos em `docs/store-listing/`)
+
+- Legendas dos screenshots **2..4** estavam em ordem diferente em cada idioma (as seis permutações de "botão flutuante", "temas" e "personalizar" apareciam no export) e a legenda **5** estava corrompida em 8 idiomas por quebra na vírgula. `optimize-listing.py` agora reescreve as quatro legendas por idioma (dicionários `CAPTION_*`).
+- `ReleaseNotes` passou a ser gerado (`RELEASE_NOTES`) com as notas de 1.2.5 nos 10 idiomas da Store; reimportar o CSV de 1.2.4 publicaria notas que o usuário desta versão já tem.
+- Coluna **Hindi (`hi`)** preenchida (ítem 1.2.4 anterior) e idioma incluído na validação de limites de campo.
+
 ## 🚀 1.2.4 (25 de Outubro de 2026)
 
 Bump `1.2.3 → 1.2.4` para corrigir o **limiar inalcançável** da faixa de upsell (3 dias distintos com uma base de ~2,9 dias ativos/mês), reduzir pela metade o espaço do log persistente e **diagnosticar** por que "Eventos personalizados" aparece vazio no Partner Center.
