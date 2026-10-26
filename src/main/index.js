@@ -17,6 +17,7 @@ const gpuPolicy = require('./gpu-policy');
 const telemetry = require('./telemetry');
 const { createOverlayManager } = require('./overlay-manager')
 const { installNavigationGuards } = require('./navigation-guard');
+const { isNewerVersion } = require('./update-check');
 const gpuPolicyFlags = gpuPolicy.applyGpuPolicy(app);
 
 if (process.platform === 'win32' && koffi) {
@@ -6009,25 +6010,32 @@ app.whenReady().then(async () => {
         }
     });
 
-    superagent.get(config.updateUrl)
-        .then(response => {
-            if (response.body.version > manifest.version) {
-                dialog.showMessageBox(window, {
-                    type: 'question',
-                    buttons: [` ${lang.UPDATE} `, ` ${lang.NO} `], // added spacing as a workaround to prevent the 'no' button to have a weird visual effect
-                    defaultId: 0,
-                    title: 'SnapAway',
-                    message: lang.UPDATE_AVAILABLE
-                }).then(result => {
-                    result.response === 0 && shell.openExternal(response.body.url);
-                }).catch(error => {
-                    console.error(error);
-                });
-            }
-        })
-        .catch(error => {
-            console.error(String(error));
-        });
+    // Instalacoes da Store sao atualizadas pela propria Store: avisar aqui
+    // mandaria o usuario baixar um instalador avulso sem necessidade.
+    if (!getStoreInstallContext().isStoreInstall) {
+        // O update.json e servido com Cache-Control immutable (7 dias): o
+        // parametro evita que o aviso fique preso na versao em cache.
+        superagent.get(config.updateUrl)
+            .query({ t: Date.now() })
+            .then(response => {
+                if (isNewerVersion(response.body && response.body.version, manifest.version)) {
+                    dialog.showMessageBox(window, {
+                        type: 'question',
+                        buttons: [` ${lang.UPDATE} `, ` ${lang.NO} `], // added spacing as a workaround to prevent the 'no' button to have a weird visual effect
+                        defaultId: 0,
+                        title: 'SnapAway',
+                        message: lang.UPDATE_AVAILABLE
+                    }).then(result => {
+                        result.response === 0 && shell.openExternal(response.body.url);
+                    }).catch(error => {
+                        console.error(error);
+                    });
+                }
+            })
+            .catch(error => {
+                console.error(String(error));
+            });
+    }
 });
 
 app.on('second-instance', () => {
