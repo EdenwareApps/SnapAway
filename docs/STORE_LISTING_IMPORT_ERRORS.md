@@ -119,6 +119,16 @@ Tipo do campo = *"Relative path (or URL to file in Partner Center)"*.
   2. A **URL inteira do en-us copiada** para os outros idiomas (reuso aceito pelo suporte MS).
 - **URL híbrida é rejeitada** (`The value you provided is not valid`): pegar `listings/{id do
   idioma}` mas manter `listingassets/{id do en-us}` — não misture.
+- **Confirmado na prática (SnapAway, 10/2026)**: a URL inteira do `en-us` foi copiada para a coluna
+  `hi` nos 5 screenshots e no logo/promo, e o import aceitou. O export seguinte veio com o prefixo
+  **reescrito pelo próprio Partner Center** para o listing do híndi
+  (`listings/1152922700028820928/listingassets/{id do en-us}`) — ou seja, a forma "híbrida" que
+  aparece num export é gerada pelo servidor, não é o que se deve submeter. Consequência prática:
+  compare o **`listingassets/<id>`** (o ativo), não a URL completa, ao decidir se uma célula já está
+  preenchida; senão o script regrava a mesma mídia em toda execução.
+- Screenshots são **ativos compartilhados** (o mesmo `listingassets/<id>` em todos os idiomas);
+  `StoreLogo300x300` e `PromoImage1920x1080` são **upload por idioma** — a URL do `en-us` serve como
+  reuso, mas um idioma novo nasce vazio e com `OverrideLogosForWin10 = False`.
 - `StoreLogo300x300` precisa de **referência válida** aceita pelo import.
 - Screenshots: mínimo 3, recomendado até 9; **1920×1080 PNG** é o padrão usado.
 - Thumbs de vídeo também 1920×1080; vídeo H.264 + AAC.

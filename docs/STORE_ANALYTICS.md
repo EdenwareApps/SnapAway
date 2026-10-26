@@ -137,10 +137,10 @@ O app em si já está traduzido para **20 idiomas** (`src/language/texts.json`):
 | 9 | `DesktopScreenshot1..5` | todos | **5 de 30 slots usados.** Nenhum par antes/depois, nenhum shot do que o Pro desbloqueia |
 | 10 | `Description` | todos | O bloco comercial (grátis/Pro/compra única) é o **penúltimo/último** parágrafo — abaixo da dobra |
 | 11 | `MobileScreenshot*`, `XboxScreenshot*`, `SurfaceHub*` | — | Vazios; irrelevante para app de PC |
-| 12 | `DesktopScreenshotCaption2..4` | pt, ar, de, es, fr, ko, zh-cn | **Legenda no screenshot errado.** A ordem dos 3 screenshots do meio é diferente em cada idioma: aparecem todas as 6 permutações de "botão flutuante", "temas" e "personalizar". Como os 5 arquivos de imagem são os mesmos, a legenda só casa com a imagem em `en-us` e `ja` |
+| 12 | `DesktopScreenshotCaption2..4` | pt, ar, de, es, fr, ko, zh-cn, hi | **Legenda no screenshot errado.** A primeira tentativa de correção reordenou só as legendas, para a ordem do `en-us` (flutuante/temas/personalizar), e piorou: o export seguinte mostrou as imagens na ordem **temas/personalizar/flutuante** nos 9 idiomas, com o texto de outro recurso embaixo de cada uma. A regra correta é legenda e imagem andarem juntas pelo slot — ver [store-listing/README.md](store-listing/README.md) item 9 |
 | 13 | `DesktopScreenshotCaption5` | pt, ar, de, es, fr, ja, ko, zh-cn | **Texto corrompido**: a legenda foi quebrada na vírgula e vazou uma coluna para a direita (o final do `pt` está no `ar`, o `ar` no `de`, o `de` no `es`, o `es` no `ja`, o `fr` no `zh-cn`). Nenhum desses 8 idiomas exibe a legenda correta; `ja`, `ko` e `zh-cn` ficaram sem o texto de restaurar |
 | 14 | `ReleaseNotes` | todos os 10 | **Notas de 1.2.4 numa submissão de 1.2.5.** As notas descrevem correções de encerramento/GPU que quem instalar a versão nova já tem, e a Store só mostra as notas da versão publicada |
-| 15 | `DesktopScreenshot1..5` | hi | **Zero mídias no híndi**, enquanto os outros 9 idiomas apontam para os mesmos 5 ativos (`listingassets/<id>` idêntico em todos). A página híndi fica sem nenhum screenshot |
+| 15 | `DesktopScreenshot1..5`, `StoreLogo300x300`, `PromoImage1920x1080`, `OverrideLogosForWin10` | hi | **Zero mídias no híndi**, enquanto os outros 9 idiomas apontam para os mesmos 5 ativos (`listingassets/<id>` idêntico em todos) e têm logo/promo próprios. A página híndi fica sem screenshot, sem logo e sem imagem promocional, e é o único idioma com `OverrideLogosForWin10 = False` |
 
 ### O que está bom (não mexer)
 
@@ -180,10 +180,13 @@ investir em campanhas pagas da Store (1 instalação em 5 campanhas).
 
 ### 7.2 Artefato gerado
 
-`docs/store-listing/listingData-optimized.csv` aplica os itens 1–8, 10 e 12–15 da seção 6
-(**75 células**: 32 legendas de screenshot, 10 `ReleaseNotes`, 4 de `TrailerToPlayAtTopOfListing`,
-10 `Feature1..10`, 7 `SearchTerm1..7`, 5 `DesktopScreenshot1..5` do `hi` e 7 campos de texto do `hi`).
-Instruções de import e o bloco em híndi em [store-listing/README.md](store-listing/README.md).
+`docs/store-listing/listingData-optimized.csv` aplica os itens 1–8, 10 e 12–15 da seção 6. Ele parte
+sempre do **export mais recente** do Partner Center, então o diff de cada rodada é só o que ainda
+falta: a rodada atual altera **31 células** (21 legendas de screenshot 2..4 em `pt`, `ar`, `de`,
+`es`, `fr`, `ko`, `zh-cn` e `hi`, 4 de `TrailerToPlayAtTopOfListing`, os slots 2..4 de screenshot do
+`hi` e as 3 células de mídia/flag do `hi`), sobre as 75 da rodada anterior — que já estão refletidas
+no export. Instruções de import e o bloco em híndi em
+[store-listing/README.md](store-listing/README.md).
 
 ## 8. Limitações desta análise
 

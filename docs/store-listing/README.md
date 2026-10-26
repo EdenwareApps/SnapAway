@@ -7,7 +7,7 @@ de aquisição do Partner Center — ver [STORE_ANALYTICS.md](../STORE_ANALYTICS
 
 | Arquivo | O que é |
 |---|---|
-| `listingData-optimized.csv` | Export da submissão `1152921505702228504` (já com o idioma `hi`) com as otimizações abaixo aplicadas — **75 células alteradas** nesta rodada. Mesmo header, mesmas 453 linhas, mesmos `ID`/`Type`/`default` — pronto para reimportar |
+| `listingData-optimized.csv` | Export **atual** da submissão `1152921505702228504` (já com o idioma `hi` importado) com as otimizações abaixo aplicadas — **31 células alteradas** em relação a ele. Mesmo header, mesmas 453 linhas, mesmos `ID`/`Type`/`default` — pronto para reimportar |
 | `optimize-listing.py` | Script que gera o CSV acima a partir do export original. Reexecutável quando a listagem mudar |
 | `README.md` | Este arquivo, incluindo o conteúdo em híndi (`hi`) que o script agora preenche |
 
@@ -28,21 +28,28 @@ python docs\store-listing\optimize-listing.py "$env:USERPROFILE\Downloads\listin
 | 5 | `Feature10` | todos os 9 | `Free to try` (não é trial) → `Free: hide up to 2 apps · Pro Lifetime: unlimited apps · one-time purchase, no subscription` |
 | 6 | `TrailerToPlayAtTopOfListing` | todos os 9 | **Limpo**. O ID do trailer vale só para a submissão em que foi enviado: ao importar numa submissão seguinte o Partner Center responde `The value you provided is not valid` e bloqueia os 5 idiomas. Deixe vazio e escolha o trailer na UI |
 | 7 | `Title` | ja | `ワンタップでアプリを即非表示` ("um toque", teclado não é toque) → `SnapAway`. O `Title` precisa ser um **nome de produto reservado**; qualquer sufixo localizado é rejeitado com `Title must be one of your reserved product names` |
-| 8 | 29 campos | hi | **Preenchido do zero**: `Description`, `ShortDescription`, `ShortTitle`, `VoiceTitle`, `DevStudio`, `CopyrightTrademarkInformation`, `AdditionalLicenseTerms`, 5 legendas de screenshot, `Feature1..10` e `SearchTerm1..7` (as `ReleaseNotes` ficam no item 11). `Title` fica `SnapAway` (nome reservado, igual ao `ja`) |
-| 9 | `DesktopScreenshotCaption2..4` | pt, ar, de, es, fr, ko, zh-cn | **Ordem normalizada**. O export traz uma ordem diferente por idioma (aparecem as seis permutações de "botão flutuante", "temas" e "personalizar"), então a legenda caía no screenshot errado em 7 idiomas. Agora todos seguem a ordem do `en-us`: 2 = botão flutuante, 3 = temas, 4 = personalizar |
+| 8 | 18 campos | hi | **Preenchido do zero**: `Description`, `ShortDescription`, `ShortTitle`, `VoiceTitle`, `DevStudio`, `CopyrightTrademarkInformation`, `AdditionalLicenseTerms`, legenda do screenshot 1 e `Feature1..9`; `Feature10`, `SearchTerm1..7`, as legendas 2..5 e as `ReleaseNotes` vêm dos passos 3, 4, 8 e 9, que rodam para os 10 idiomas. `Title` fica `SnapAway` (nome reservado, igual ao `ja`) |
+| 9 | `DesktopScreenshotCaption2..4` | pt, ar, de, es, fr, ko, zh-cn, hi | **Legenda presa à imagem do slot**. A rodada anterior reordenou só as legendas para a ordem do `en-us` (flutuante, temas, personalizar), mas o export atual mostra as imagens na ordem **temas, personalizar, botão flutuante** nos 9 idiomas — resultado: em 7 idiomas o texto ficou embaixo do screenshot errado. Agora as legendas 2..4 seguem a ordem real das imagens: 2 = temas, 3 = personalizar, 4 = botão flutuante |
 | 10 | `DesktopScreenshotCaption5` | todos os 10 | **Texto corrompido no export**. A legenda foi quebrada na vírgula em algum editor e vazou uma coluna para a direita: o `pt` terminava no `ar`, o `ar` no `de`, o `de` no `es`, o `es` no `ja`, o `fr` no `zh-cn` — e cada idioma ficou com um fragmento, em outro idioma. Reescrita em todos, **sem vírgulas** (separador virou `—`) para o problema não voltar |
 | 11 | `ReleaseNotes` | todos os 10 | **Notas de 1.2.5**. O export carrega as notas de 1.2.4, que descrevem correções que quem instalar 1.2.5 já tem. Substituídas pelo que a versão entrega: tour guiado com a tecla física, aviso de janela-alvo ausente e as 18 traduções que faltavam |
-| 12 | `DesktopScreenshot1..5` | hi | **Mídias apontadas para as do `en-us`**. As imagens são ativos compartilhados da submissão (o mesmo `listingassets/<id>` aparece nos 9 idiomas), mas o `hi` chega sem nenhuma linha de mídia. Copiamos as 5 URLs do `en-us`, na ordem canônica das legendas: principal, botão flutuante, temas, personalizar, restaurar. Se o import recusar o prefixo do `en-us` com `The value you provided is not valid`, preencha `HI_LISTING_ID` no script com o ID do listing híndi (o número entre `/listings/` e `/listingassets/` na URL do Partner Center) e regenere |
+| 12 | `DesktopScreenshot1..5` | hi | **Mídias apontadas para as do `en-us`**. As imagens são ativos compartilhados da submissão (o mesmo `listingassets/<id>` aparece nos 9 idiomas). A importação funcionou: o Partner Center aceitou a URL do `en-us` e reescreveu sozinho o prefixo para o listing do `hi` (`1152922700028820928`). O script agora compara o **ID do asset**, não a URL, e só escreve quando o slot está vazio ou aponta para outro asset — regerar sobre um export já importado não muda nada. Nesta rodada a única escrita é nos slots 2..4 do `hi`, que estavam na ordem antiga (flutuante, temas, personalizar) |
+| 13 | `StoreLogo300x300`, `PromoImage1920x1080`, `OverrideLogosForWin10` | hi | **Mídia e flag que o idioma novo não herda.** O `hi` era o único idioma sem logo, sem imagem promocional e com `OverrideLogosForWin10 = False`. Logo e promo recebem a URL do `en-us` (mesmo mecanismo dos screenshots, aceito também para logos — ver `STORE_LISTING_IMPORT_ERRORS.md` §4) e a flag vai para `True`, igual aos outros 9 idiomas |
 
 Validação feita no arquivo gerado: header idêntico, 453 linhas, `Field`/`ID`/`Type`/`default`
 preservados linha a linha, nenhum termo de busca duplicado ou acima de 30 caracteres, nenhuma
 legenda acima de 200 caracteres, nenhuma nota de versão acima de 1500 caracteres, UTF-8 com BOM e
 CRLF em todo o arquivo (inclusive dentro dos campos multilinha, como no export original). O diff
-real contra o export é de **75 células**: 32 legendas de screenshot, 10 `ReleaseNotes`, 4 de
-`TrailerToPlayAtTopOfListing`, 10 `Feature1..10`, 7 `SearchTerm1..7`, 5 `DesktopScreenshot1..5` do
-`hi` e 7 campos de texto do `hi` (`Description`, `ShortTitle`, `VoiceTitle`, `ShortDescription`,
-`DevStudio`, `CopyrightTrademarkInformation`, `AdditionalLicenseTerms`). O script registra **76**
-alterações no log porque reaplica `Title` do `ja` mesmo quando o valor já está igual.
+real contra o export atual é de **31 células**: 21 legendas de screenshot (2..4 de `pt`, `ar`, `de`,
+`es`, `fr`, `ko`, `zh-cn` e `hi`), 4 de `TrailerToPlayAtTopOfListing`, 3 slots de screenshot do
+`hi` (2..4) e as 3 células de mídia/flag do `hi`. O log do script lista exatamente essas 31 — as
+comparações normalizam CRLF, então `Description`, `ReleaseNotes` e `Title` do `ja` não aparecem
+mais como alteração quando já estão iguais.
+
+A rodada anterior partiu do export **anterior à importação** e alterou 75 células (incluindo os 35
+campos de texto/mídia do `hi` e as notas de versão). Este arquivo já é o resultado acumulado
+daquelas mudanças **mais** as 31 desta rodada; o export atual confirma que todas as anteriores
+entraram (notas de 1.2.5, `Title` do `ja`, termos de busca, `Feature10`, descrições e os 5
+screenshots do `hi`).
 
 ## O que o CSV **não** altera (e por quê)
 
@@ -53,6 +60,12 @@ alterações no log porque reaplica `Title` do `ja` mesmo quando o valor já est
   possível produzir imagem por CSV). O CSV só **aponta** o `hi` para as mídias compartilhadas do
   `en-us`. Recomendação registrada na seção 6 do `STORE_ANALYTICS.md`: adicionar par antes/depois e
   um card do que o Pro desbloqueia.
+- **Trailer no topo** — `TrailerToPlayAtTopOfListing` é limpo em `en-us`, `es`, `fr` e `ko` (os
+  únicos com trailer): o campo é o ponteiro de autoplay e o Partner Center rejeita o ID quando a
+  submissão muda. O trailer em si (`Trailer1`) é preservado; o toggle "tocar no topo" precisa ser
+  religado na UI depois do import.
+- **Logo e imagem promocional dos outros 8 idiomas** — cada idioma tem o próprio upload e está
+  preenchido; só o `hi` estava vazio.
 
 ## Como importar
 
@@ -63,8 +76,9 @@ alterações no log porque reaplica `Title` do `ja` mesmo quando o valor já est
 
 ## Híndi (`hi`) — preenchido pelo script
 
-O idioma já foi adicionado à listagem, então o export atual traz a coluna `hi` vazia e o script
-preenche 35 células dela. Decisões:
+O idioma já foi adicionado à listagem, então o export atual traz a coluna `hi` e o script preenche
+as células dela. Na primeira importação foram 35 células (30 campos de texto + os 5 screenshots);
+agora entram mais `StoreLogo300x300`, `PromoImage1920x1080` e `OverrideLogosForWin10`. Decisões:
 
 | Campo | Valor | Por quê |
 |---|---|---|
@@ -98,8 +112,14 @@ SnapAway आपको Windows पर एक ही शॉर्टकट से 
 एक बार की खरीद। कोई सदस्यता नहीं।
 ```
 
-`ShortDescription`, `Feature1..10` e a legenda 1 ficam em `HINDI`, no topo de
+`ShortDescription`, `Feature1..9` e a legenda 1 ficam em `HINDI`, no topo de
 `optimize-listing.py`; as legendas 2..5 dos 10 idiomas ficam em `CAPTION_FLOATING`,
-`CAPTION_THEMES`, `CAPTION_CUSTOMIZE` e `CAPTION_RESTORE`, as notas de versão em `RELEASE_NOTES` e
-o ID de listing usado nas mídias do `hi` em `HI_LISTING_ID`. É a única fonte, para não haver duas
-versões do texto.
+`CAPTION_THEMES`, `CAPTION_CUSTOMIZE` e `CAPTION_RESTORE`, as notas de versão em `RELEASE_NOTES`,
+a mídia reaproveitada do `en-us` em `LOGO_FIELDS`/`HI_LISTING_ID` e a flag em
+`OVERRIDE_LOGOS_WIN10`. É a única fonte, para não haver duas versões do texto.
+
+> **Ordem dos screenshots 2..4.** O Partner Center devolve no export os slots na ordem em que estão
+> na listagem — hoje **temas, personalizar, botão flutuante** nos 10 idiomas. Se a ordem for mudada
+> na UI, as legendas ficam dessincronizadas: regenere o CSV a partir do export novo e ajuste o
+> mapeamento do passo 8 de `optimize-listing.py` para a ordem que o export mostrar. Legenda e imagem
+> andam sempre juntas pelo slot, nunca por posição fixa.

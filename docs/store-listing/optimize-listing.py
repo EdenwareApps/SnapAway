@@ -36,9 +36,34 @@ MAX_RELEASE_NOTES = 1500
 # prefixo do en-us (as imagens sao ativos compartilhados, o mesmo listingassets/<id>
 # aparece em todos os idiomas). Troque pelo ID do listing hindi se a importacao
 # recusar o prefixo emprestado com "The value you provided is not valid".
+#
+# O ID do listing hindi e 1152922700028820928: o Partner Center reescreveu sozinho
+# o prefixo emprestado do en-us para ele depois da primeira importacao que deu
+# certo, o que confirma que as URLs do en-us sao aceitas na coluna hi.
 HI_LISTING_ID = ""
 
+# Campos de midia que a coluna hi nao herda automaticamente. As URLs do en-us sao
+# aceitas em outro idioma (ver docs/STORE_LISTING_IMPORT_ERRORS.md §4), inclusive
+# para logos — testado antes no pt. `OverrideLogosForWin10` e booleano e nasce
+# False no idioma novo, enquanto todos os outros idiomas estao em True.
+LOGO_FIELDS = ("StoreLogo300x300", "PromoImage1920x1080")
+OVERRIDE_LOGOS_WIN10 = "True"
+
 # ---------------------------------------------------------------- conteudo novo
+
+def same(current, expected):
+    """Compara ignorando CRLF e espacos nas pontas.
+
+    O export do Partner Center grava CRLF tambem dentro dos campos multilinha,
+    enquanto os textos daqui usam LF; comparar cru acusava alteracao em toda
+    execucao nos campos Description/ReleaseNotes.
+    """
+    return (current or "").replace("\r\n", "\n").strip() == expected.replace("\r\n", "\n").strip()
+
+
+def asset_id(url):
+    m = re.search(r"listingassets/(\d+)", url or "")
+    return m.group(1) if m else ""
 
 SHORTCUT_PARAGRAPH = {
     "pt": "Pressione F6 para ocultar na hora os apps selecionados. "
@@ -161,12 +186,12 @@ TITLE_FIX = {"ja": "SnapAway"}
 
 # Legendas dos screenshots 2..5.
 #
-# O export traz uma ORDEM diferente por idioma: as seis permutacoes de "botao
-# flutuante", "temas" e "personalizar" aparecem (pt = temas/customizar/flutuante,
-# ar e de = customizar/flutuante/temas, es = customizar/temas/flutuante, fr =
-# flutuante/customizar/temas, ko = temas/flutuante/customizar). Como os cinco
-# screenshots sao os mesmos arquivos em todos os idiomas, as legendas 2..4 sao
-# reescritas na ordem do `en-us`: 2 = botao flutuante, 3 = temas, 4 = personalizar.
+# Cada legenda tem que acompanhar a IMAGEM do mesmo slot. No export atual a ordem
+# das imagens 2..4 e a mesma em todos os idiomas — temas, personalizar, botao
+# flutuante —, entao as legendas 2..4 sao escritas nessa mesma ordem. (Uma versao
+# anterior reordenava apenas as legendas para flutuante/temas/personalizar; elas
+# ficaram dessincronizadas das imagens e a Store exibiu texto errado embaixo de
+# cada screenshot em 7 idiomas.)
 #
 # A legenda 5 estava corrompida no export em 8 idiomas: o texto foi quebrado na
 # virgula e vazou uma coluna para a direita (o pt terminava no ar, o ar no de, o
@@ -347,7 +372,7 @@ def main():
     # 4. feature 10
     for lang in LANGS:
         row = by_field["Feature10"]
-        if (row.get(lang) or "").strip() != FEATURE10[lang]:
+        if not same(row.get(lang), FEATURE10[lang]):
             changes.append((f"Feature10[{lang}]", (row.get(lang) or "").strip(), FEATURE10[lang]))
             row[lang] = FEATURE10[lang]
 
@@ -364,8 +389,9 @@ def main():
     # 6. titulo japones
     for lang, title in TITLE_FIX.items():
         row = by_field["Title"]
-        changes.append((f"Title[{lang}]", (row.get(lang) or "").strip(), title))
-        row[lang] = title
+        if not same(row.get(lang), title):
+            changes.append((f"Title[{lang}]", (row.get(lang) or "").strip(), title))
+            row[lang] = title
 
     # 7. idioma hindi (so existe no export depois de o idioma ser adicionado na Store)
     if "hi" in fieldnames:
@@ -374,23 +400,25 @@ def main():
             if row is None:
                 continue
             value = value.strip()
-            if (row.get("hi") or "").strip() != value:
+            if not same(row.get("hi"), value):
                 changes.append((f"{name}[hi]", (row.get("hi") or "").strip(), value))
                 row["hi"] = value
 
-    # 8. legendas dos screenshots 2..5 (ordem por idioma + legenda 5 corrompida no export)
+    # 8. legendas dos screenshots 2..5 (na ordem das imagens + legenda 5 corrompida)
+    # A ordem das imagens 2..4 no export atual e identica em todos os idiomas
+    # (temas, personalizar, botao flutuante), entao as legendas seguem essa ordem.
     for lang in LANGS:
         if lang not in CAPTION_THEMES:
             continue
         for name, value in (
-            ("DesktopScreenshotCaption2", CAPTION_FLOATING[lang]),
-            ("DesktopScreenshotCaption3", CAPTION_THEMES[lang]),
-            ("DesktopScreenshotCaption4", CAPTION_CUSTOMIZE[lang]),
+            ("DesktopScreenshotCaption2", CAPTION_THEMES[lang]),
+            ("DesktopScreenshotCaption3", CAPTION_CUSTOMIZE[lang]),
+            ("DesktopScreenshotCaption4", CAPTION_FLOATING[lang]),
             ("DesktopScreenshotCaption5", CAPTION_RESTORE[lang]),
         ):
             assert len(value) <= MAX_CAPTION, f"{name}[{lang}]: {len(value)}"
             row = by_field[name]
-            if (row.get(lang) or "").strip() != value:
+            if not same(row.get(lang), value):
                 changes.append((f"{name}[{lang}]", (row.get(lang) or "").strip(), value))
                 row[lang] = value
 
@@ -399,26 +427,50 @@ def main():
         value = RELEASE_NOTES[lang].strip()
         assert len(value) <= MAX_RELEASE_NOTES, f"ReleaseNotes[{lang}]: {len(value)}"
         row = by_field["ReleaseNotes"]
-        if (row.get(lang) or "").strip() != value:
+        if not same(row.get(lang), value):
             changes.append((f"ReleaseNotes[{lang}]", (row.get(lang) or "").strip(), value))
             row[lang] = value
 
-    # 10. midias dos screenshots no hindi
+    # 10. midias que o hindi nao herda
     # A coluna hi do export vem sem nenhuma linha de midia, embora as imagens sejam
-    # as mesmas dos outros idiomas. Copiamos as URLs do en-us, que e a ordem
-    # canonica (a mesma usada nas legendas do passo 8).
+    # ativos compartilhados. Copiamos as URLs do en-us: os 5 screenshots (ordem
+    # canonica, a mesma das legendas) e os logos/promo, que nos outros idiomas sao
+    # uploads proprios mas aceitam a URL do en-us.
     if "hi" in fieldnames:
         for i in range(1, 6):
             row = by_field[f"DesktopScreenshot{i}"]
             source = (row.get("en-us") or "").strip()
             if not source:
                 continue
+            # O Partner Center reescreve o prefixo para o listing do hindi, entao a
+            # celula ja preenchida nunca e igual a URL do en-us caractere a caractere;
+            # o que importa e apontar para o mesmo asset.
+            if asset_id(row.get("hi")) == asset_id(source):
+                continue
             value = source
             if HI_LISTING_ID:
                 value = re.sub(r"/listings/\d+/", f"/listings/{HI_LISTING_ID}/", source)
-            if (row.get("hi") or "").strip() != value:
-                changes.append((f"DesktopScreenshot{i}[hi]", (row.get("hi") or "").strip(), value))
-                row["hi"] = value
+            changes.append((f"DesktopScreenshot{i}[hi]", (row.get("hi") or "").strip(), value))
+            row["hi"] = value
+
+        for name in LOGO_FIELDS:
+            row = by_field.get(name)
+            if row is None:
+                continue
+            source = (row.get("en-us") or "").strip()
+            if not source or asset_id(row.get("hi")) == asset_id(source):
+                continue
+            value = source
+            if HI_LISTING_ID:
+                value = re.sub(r"/listings/\d+/", f"/listings/{HI_LISTING_ID}/", source)
+            changes.append((f"{name}[hi]", (row.get("hi") or "").strip(), value))
+            row["hi"] = value
+
+        row = by_field.get("OverrideLogosForWin10")
+        if row is not None and not same(row.get("hi"), OVERRIDE_LOGOS_WIN10):
+            changes.append(("OverrideLogosForWin10[hi]", (row.get("hi") or "").strip(),
+                            OVERRIDE_LOGOS_WIN10))
+            row["hi"] = OVERRIDE_LOGOS_WIN10
 
     out = Path(__file__).resolve().parent / "listingData-optimized.csv"
     with out.open("w", encoding="utf-8-sig", newline="") as fh:

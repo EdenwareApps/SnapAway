@@ -26,10 +26,11 @@ Bump `1.2.4 → 1.2.5` para transformar o primeiro uso (e o uso de quem aperta o
 
 ### 4. Listagem da Store (arquivos em `docs/store-listing/`)
 
-- Legendas dos screenshots **2..4** estavam em ordem diferente em cada idioma (as seis permutações de "botão flutuante", "temas" e "personalizar" apareciam no export) e a legenda **5** estava corrompida em 8 idiomas por quebra na vírgula. `optimize-listing.py` agora reescreve as quatro legendas por idioma (dicionários `CAPTION_*`).
+- Legendas dos screenshots **2..4**: a primeira tentativa reordenou apenas as legendas para a ordem do `en-us` e o resultado foi pior — o export seguinte mostrou as imagens na ordem **temas, personalizar, botão flutuante** nos 9 idiomas, deixando o texto de um recurso embaixo da imagem de outro em 7 idiomas. Agora legenda e imagem andam juntas pelo slot (2 = temas, 3 = personalizar, 4 = flutuante), e os slots 2..4 do `hi` foram normalizados para a mesma ordem. A legenda **5** continuava corrompida em 8 idiomas por quebra na vírgula; reescrita sem vírgulas. `optimize-listing.py` reescreve as quatro legendas por idioma (dicionários `CAPTION_*`) e compara o **ID do asset** antes de regravar mídia, então regerar sobre um export já importado não gera diff.
 - `ReleaseNotes` passou a ser gerado (`RELEASE_NOTES`) com as notas de 1.2.5 nos 10 idiomas da Store; reimportar o CSV de 1.2.4 publicaria notas que o usuário desta versão já tem.
 - Coluna **Hindi (`hi`)** preenchida (ítem 1.2.4 anterior) e idioma incluído na validação de limites de campo.
-- `DesktopScreenshot1..5` do **hindi** apontados para as mídias compartilhadas do `en-us` (`HI_LISTING_ID` em `optimize-listing.py`), porque o export traz a coluna `hi` sem nenhuma linha de mídia e a página híndi ficava sem screenshots.
+- `DesktopScreenshot1..5` do **hindi** apontados para as mídias compartilhadas do `en-us` (`HI_LISTING_ID` em `optimize-listing.py`), porque o export traz a coluna `hi` sem nenhuma linha de mídia e a página híndi ficava sem screenshots. O Partner Center aceitou e reescreveu o prefixo para o listing do híndi (`1152922700028820928`).
+- `StoreLogo300x300`, `PromoImage1920x1080` e `OverrideLogosForWin10` do **hindi**: era o único idioma sem logo, sem imagem promocional e com a flag em `False`. Logo e promo passaram a reaproveitar a URL do `en-us` (`LOGO_FIELDS`) e a flag vai para `True` (`OVERRIDE_LOGOS_WIN10`).
 
 ## 🚀 1.2.4 (25 de Outubro de 2026)
 
