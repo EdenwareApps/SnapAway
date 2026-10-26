@@ -26,7 +26,10 @@
   let storeInitResult = null;
   let isStoreInitLoading = false;
   const storeProductId = '9NNLVZPCLLTZ';
-  const fallbackStorePrice = 'US$ 8,99';
+  // Preço base do SnapAway Pro na Store (US$ 14,99). Só aparece como
+  // placeholder enquanto o preço real da Store não carrega; mercados com preço
+  // próprio (BR, IN, NG, PH) recebem o valor local via getIapProducts.
+  const fallbackStorePrice = 'US$ 14,99';
   const storePriceCacheKey = 'snapaway.lastKnownStorePrice';
   let lastKnownStorePrice = loadCachedStorePrice();
 

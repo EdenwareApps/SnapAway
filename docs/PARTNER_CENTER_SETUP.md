@@ -50,10 +50,21 @@ This is a common Store restriction: the store listing name must be unique across
   a US$ 11,99 — a base de 29,99 nunca foi paga e criava um penhasco de +150% no fim da promoção.
 - Listing: 10 idiomas (`en-us`, `hi`, `pt`, `ar`, `zh`, `fr`, `de`, `ja`, `ko`, `es`).
   O CSV é gerado por `docs/store-listing/optimize-addon-listing.py`
-- Preço ao vivo conferido na Store em 26/10/2026 (`storeedgefd` → products/`9NNLVZPCLLTZ`):
-  app **gratuito**, add-on com preço riscado de **US$ 14,99** e promoção de **20%** em vigor
-  (US$ 11,99) até **31/10/2026 23:59 UTC**. No Brasil a Store exibe **R$ 58,95**; o campo MSRP
-  em BRL ainda mostra R$ 24,95 (resíduo do preço antigo) e vale conferir em Partner Center → Preços.
+- Preço base (não promocional), definido em 26/10/2026: **US$ 14,99** no grupo Default (236
+  mercados). Grupos com preço próprio:
+
+  | Grupo | Moeda | Preço |
+  |---|---|---|
+  | Brazil (1) | BRL | R$ 24,95 |
+  | India (1) | INR | ₹ 244 |
+  | Nigeria (1) | NGN | ₦ 2.899 |
+  | Philippines (1) | PHP | ₱ 145 |
+
+  O fallback do modal Pro ([ProModal.svelte](../src/renderer/pro/ProModal.svelte), `fallbackStorePrice`)
+  acompanha essa base; o valor exibido em cada mercado vem da Store via `getIapProducts`.
+- Leitura da Store em 26/10/2026 (`storeedgefd` → products/`9NNLVZPCLLTZ`): app **gratuito** e uma
+  promoção de **20%** agendada até **31/10/2026 23:59 UTC** (por isso o preço ao vivo pode aparecer
+  abaixo da base).
 
 ## Notes
 
