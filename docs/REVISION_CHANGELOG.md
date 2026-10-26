@@ -29,6 +29,7 @@ Bump `1.2.4 → 1.2.5` para transformar o primeiro uso (e o uso de quem aperta o
 - Legendas dos screenshots **2..4** estavam em ordem diferente em cada idioma (as seis permutações de "botão flutuante", "temas" e "personalizar" apareciam no export) e a legenda **5** estava corrompida em 8 idiomas por quebra na vírgula. `optimize-listing.py` agora reescreve as quatro legendas por idioma (dicionários `CAPTION_*`).
 - `ReleaseNotes` passou a ser gerado (`RELEASE_NOTES`) com as notas de 1.2.5 nos 10 idiomas da Store; reimportar o CSV de 1.2.4 publicaria notas que o usuário desta versão já tem.
 - Coluna **Hindi (`hi`)** preenchida (ítem 1.2.4 anterior) e idioma incluído na validação de limites de campo.
+- `DesktopScreenshot1..5` do **hindi** apontados para as mídias compartilhadas do `en-us` (`HI_LISTING_ID` em `optimize-listing.py`), porque o export traz a coluna `hi` sem nenhuma linha de mídia e a página híndi ficava sem screenshots.
 
 ## 🚀 1.2.4 (25 de Outubro de 2026)
 

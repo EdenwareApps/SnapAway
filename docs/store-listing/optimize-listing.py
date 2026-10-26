@@ -32,6 +32,12 @@ MAX_SEARCH_TERM = 30
 MAX_CAPTION = 200
 MAX_RELEASE_NOTES = 1500
 
+# Prefixo de listing usado nas URLs de midia copiadas para o hindi. Vazio = usar o
+# prefixo do en-us (as imagens sao ativos compartilhados, o mesmo listingassets/<id>
+# aparece em todos os idiomas). Troque pelo ID do listing hindi se a importacao
+# recusar o prefixo emprestado com "The value you provided is not valid".
+HI_LISTING_ID = ""
+
 # ---------------------------------------------------------------- conteudo novo
 
 SHORTCUT_PARAGRAPH = {
@@ -396,6 +402,23 @@ def main():
         if (row.get(lang) or "").strip() != value:
             changes.append((f"ReleaseNotes[{lang}]", (row.get(lang) or "").strip(), value))
             row[lang] = value
+
+    # 10. midias dos screenshots no hindi
+    # A coluna hi do export vem sem nenhuma linha de midia, embora as imagens sejam
+    # as mesmas dos outros idiomas. Copiamos as URLs do en-us, que e a ordem
+    # canonica (a mesma usada nas legendas do passo 8).
+    if "hi" in fieldnames:
+        for i in range(1, 6):
+            row = by_field[f"DesktopScreenshot{i}"]
+            source = (row.get("en-us") or "").strip()
+            if not source:
+                continue
+            value = source
+            if HI_LISTING_ID:
+                value = re.sub(r"/listings/\d+/", f"/listings/{HI_LISTING_ID}/", source)
+            if (row.get("hi") or "").strip() != value:
+                changes.append((f"DesktopScreenshot{i}[hi]", (row.get("hi") or "").strip(), value))
+                row["hi"] = value
 
     out = Path(__file__).resolve().parent / "listingData-optimized.csv"
     with out.open("w", encoding="utf-8-sig", newline="") as fh:

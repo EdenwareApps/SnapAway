@@ -9,7 +9,7 @@ estimada.** Onde há cálculo derivado, a fórmula está explícita.
 | Fonte | Conteúdo | Janela |
 |---|---|---|
 | `FireShot Capture 004 - Aquisições ... Partner Center.pdf` | Insights → Aquisições do produto SnapAway (funil, instalações, exibições, taxa de sucesso, geografia, campanhas) | Últimos **3 meses** |
-| `listingData-9NWCB3QXSBVJ-1152921505702228504.csv` | Listagem da submissão `1152921505702228504` — 453 linhas, 9 idiomas | Estado atual |
+| `listingData-9NWCB3QXSBVJ-1152921505702228504.csv` | Listagem da submissão `1152921505702228504` — 453 linhas, 10 idiomas (com `hi`) | Estado atual |
 | `Uso-Jogos-e-Aplicativos.pdf` | Insights → Uso (compras de complementos) | **Último mês** |
 
 > O PDF de Aquisições é **somente imagem** (sem camada de texto): foi rasterizado com
@@ -140,6 +140,7 @@ O app em si já está traduzido para **20 idiomas** (`src/language/texts.json`):
 | 12 | `DesktopScreenshotCaption2..4` | pt, ar, de, es, fr, ko, zh-cn | **Legenda no screenshot errado.** A ordem dos 3 screenshots do meio é diferente em cada idioma: aparecem todas as 6 permutações de "botão flutuante", "temas" e "personalizar". Como os 5 arquivos de imagem são os mesmos, a legenda só casa com a imagem em `en-us` e `ja` |
 | 13 | `DesktopScreenshotCaption5` | pt, ar, de, es, fr, ja, ko, zh-cn | **Texto corrompido**: a legenda foi quebrada na vírgula e vazou uma coluna para a direita (o final do `pt` está no `ar`, o `ar` no `de`, o `de` no `es`, o `es` no `ja`, o `fr` no `zh-cn`). Nenhum desses 8 idiomas exibe a legenda correta; `ja`, `ko` e `zh-cn` ficaram sem o texto de restaurar |
 | 14 | `ReleaseNotes` | todos os 10 | **Notas de 1.2.4 numa submissão de 1.2.5.** As notas descrevem correções de encerramento/GPU que quem instalar a versão nova já tem, e a Store só mostra as notas da versão publicada |
+| 15 | `DesktopScreenshot1..5` | hi | **Zero mídias no híndi**, enquanto os outros 9 idiomas apontam para os mesmos 5 ativos (`listingassets/<id>` idêntico em todos). A página híndi fica sem nenhum screenshot |
 
 ### O que está bom (não mexer)
 
@@ -179,9 +180,9 @@ investir em campanhas pagas da Store (1 instalação em 5 campanhas).
 
 ### 7.2 Artefato gerado
 
-`docs/store-listing/listingData-optimized.csv` aplica os itens 1–8, 10 e 12–14 da seção 6
-(**70 células**: 32 legendas de screenshot, 10 `ReleaseNotes`, 4 de `TrailerToPlayAtTopOfListing`,
-10 `Feature1..10`, 7 `SearchTerm1..7` e 7 campos de texto do `hi`).
+`docs/store-listing/listingData-optimized.csv` aplica os itens 1–8, 10 e 12–15 da seção 6
+(**75 células**: 32 legendas de screenshot, 10 `ReleaseNotes`, 4 de `TrailerToPlayAtTopOfListing`,
+10 `Feature1..10`, 7 `SearchTerm1..7`, 5 `DesktopScreenshot1..5` do `hi` e 7 campos de texto do `hi`).
 Instruções de import e o bloco em híndi em [store-listing/README.md](store-listing/README.md).
 
 ## 8. Limitações desta análise
