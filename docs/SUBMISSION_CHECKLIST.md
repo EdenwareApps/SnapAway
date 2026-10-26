@@ -6,6 +6,8 @@
 - [ ] APPX is signed with Partner Center certificate
 - [ ] Marketing assets prepared (screenshots, descriptions)
 - [ ] App description and privacy policy reviewed
+  - Privacy policy URL: **https://edenware.app/snapaway/privacy.html** (o `.html` é obrigatório)
+  - A página descreve o que o app realmente faz: relatórios de erro vão ao Sentry sempre em produção, `update.json` é consultado, chave de licença vai ao `edenware.app/hub`. Sem isso a declaração de privacidade da Store fica em desacordo com o código.
 
 ## Partner Center Setup
 1. Go to https://partner.microsoft.com/dashboard
