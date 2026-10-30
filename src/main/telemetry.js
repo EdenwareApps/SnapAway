@@ -236,7 +236,9 @@ function initMainTelemetry(app, options = {}) {
     applyScope(scope => {
       scope.setTag('process', 'main');
       scope.setTag('installContext', options.isStoreInstall ? 'store' : 'standalone');
-      scope.setContext('gpuPolicy', options.gpuPolicyFlags || {});
+      scope.setContext('gpuPolicy', Object.assign({}, options.gpuPolicyFlags || {}, {
+        fallback: options.gpuPolicyState || null
+      }));
       scope.setContext('environment', {
         platform: process.platform,
         electronVersion: process.versions.electron,
@@ -442,6 +444,48 @@ function setTelemetryContext(section, data) {
   });
 }
 
+// Descrição não sensível dos monitores. O crash ELECTRON (GPU process,
+// `GetWmiPerferredMonitorSourceMode` no DxDiag) depende justamente da
+// enumeração de display do sistema: sem saber quantos monitores, escala,
+// frequência e se há saída interna/externa, não é possível correlacionar.
+function describeDisplays(screen) {
+  if (!screen || typeof screen.getAllDisplays !== 'function') {
+    return { monitorCount: null, displays: [] };
+  }
+  let displays = [];
+  let primaryId = null;
+  try {
+    displays = screen.getAllDisplays() || [];
+    primaryId = typeof screen.getPrimaryDisplay === 'function' ? (screen.getPrimaryDisplay()?.id ?? null) : null;
+  } catch (_) {
+    return { monitorCount: null, displays: [] };
+  }
+
+  return {
+    monitorCount: displays.length,
+    displays: displays.map(display => ({
+      primary: display.id === primaryId,
+      internal: display.internal === true,
+      size: display.size ? `${display.size.width}x${display.size.height}` : null,
+      bounds: display.bounds ? { x: display.bounds.x, y: display.bounds.y } : null,
+      scaleFactor: typeof display.scaleFactor === 'number' ? display.scaleFactor : null,
+      rotation: typeof display.rotation === 'number' ? display.rotation : null,
+      displayFrequency: typeof display.displayFrequency === 'number' ? display.displayFrequency : null,
+      colorDepth: typeof display.colorDepth === 'number' ? display.colorDepth : null,
+      depthPerComponent: typeof display.depthPerComponent === 'number' ? display.depthPerComponent : null,
+      colorSpace: typeof display.colorSpace === 'string' ? display.colorSpace : null,
+      touchSupport: display.touchSupport ?? null
+    }))
+  };
+}
+
+// Número da build do Windows (ex.: 26200 = 25H2). `os.release()` sozinho
+// devolve "10.0.<build>" e esconde a build que realmente muda o DxDiag.
+function getWindowsBuildNumber() {
+  const match = /^10\.0\.(\d+)/.exec(os.release() || '');
+  return match ? Number(match[1]) : null;
+}
+
 async function captureGpuEnvironment(app, options = {}) {
   if (!app || typeof app.getGPUInfo !== 'function') {
     captureTelemetryEvent('gpu.environment.missing', { message: 'GPU API not available' });
@@ -469,6 +513,8 @@ async function captureGpuEnvironment(app, options = {}) {
       driver,
       driverVersion,
       angleBackend,
+      gpuFallback: options.gpuPolicyState || null,
+      ...describeDisplays(options.screen),
       transparentWindow: true,
       titlebar: 'custom',
       storeInstall: !!options.isStoreInstall,
@@ -476,6 +522,7 @@ async function captureGpuEnvironment(app, options = {}) {
       electronVersion: process.versions.electron,
       chromeVersion: process.versions.chrome,
       windowsVersion: os.release(),
+      windowsBuild: getWindowsBuildNumber(),
       osArch: os.arch()
     };
 
@@ -488,14 +535,20 @@ async function captureGpuEnvironment(app, options = {}) {
 
 function captureStartupDiagnostics(app, options = {}) {
   const gpuPolicy = options.gpuPolicyFlags || {};
+  const gpuFallback = options.gpuPolicyState || {};
   const displayInfo = options.screen || {};
   const diagnostics = {
     transparency: true,
     hardwareAccelerationDisabled: gpuPolicy.disableGpu === true,
     gpuCompositingDisabled: gpuPolicy.disableGpuCompositing === true,
     softwareRendering: gpuPolicy.softwareRendering === true,
+    gpuFallbackActive: gpuFallback.active === true,
+    gpuFallbackTier: typeof gpuFallback.tier === 'number' ? gpuFallback.tier : null,
+    gpuCrashCount: typeof gpuFallback.crashCount === 'number' ? gpuFallback.crashCount : null,
+    gpuBootCrashes: typeof gpuFallback.bootCrashes === 'number' ? gpuFallback.bootCrashes : null,
     displayScaling: typeof displayInfo.getPrimaryDisplay === 'function' ? displayInfo.getPrimaryDisplay().scaleFactor : null,
     monitorCount: typeof displayInfo.getAllDisplays === 'function' ? displayInfo.getAllDisplays().length : null,
+    windowsBuild: getWindowsBuildNumber(),
     windowsStore: options.isStoreInstall === true,
     isPackaged: app.isPackaged
   };

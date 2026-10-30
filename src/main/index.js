@@ -145,6 +145,7 @@ const defaultStoreIapProductId = storeProducts?.store?.products?.Pro?.id || '9NN
 const storeInstallContext = getStoreInstallContext();
 telemetry.initMainTelemetry(app, {
   gpuPolicyFlags,
+  gpuPolicyState: gpuPolicy.getGpuPolicySnapshot(app),
   isStoreInstall: storeInstallContext.isStoreInstall,
   startupMode: process.env.SNAPAWAY_SAFE_MODE === '1' ? 'safe' : 'normal',
   screen
@@ -6177,10 +6178,10 @@ function recordGpuCrashForFallback(source) {
     }
 
     try {
-        const shouldRelaunch = gpuPolicy.recordGpuCrash(app);
+        const shouldRelaunch = gpuPolicy.recordGpuCrash(app, source);
         if (shouldRelaunch) {
             console.warn('[GPU FALLBACK] Relaunching app to apply GPU fallback.');
-            appendIapTrace('app.gpu-fallback.activated');
+            appendIapTrace('app.gpu-fallback.activated', gpuPolicy.getGpuPolicySnapshot(app));
             app.isQuiting = true;
             app.relaunch();
             setImmediate(() => app.quit());
@@ -6190,14 +6191,37 @@ function recordGpuCrashForFallback(source) {
     }
 }
 
+// Sessão saudável (sem crash de GPU) → zera a série de crashes, para um crash
+// isolado no futuro não cair direto no fallback. `unref()` para não segurar o
+// processo vivo só por causa deste timer.
+const GPU_HEALTHY_RUN_MS = 60 * 1000;
+const gpuHealthyRunTimer = setTimeout(() => {
+    try {
+        if (gpuPolicy.noteHealthyRun(app)) {
+            console.log('[GPU FALLBACK] Healthy run — GPU crash streak reset.');
+            appendIapTrace('app.gpu-fallback.streak-reset');
+        }
+    } catch (err) {
+        console.warn('[GPU FALLBACK] Failed to reset GPU crash streak:', err && err.message ? err.message : err);
+    }
+}, GPU_HEALTHY_RUN_MS);
+if (typeof gpuHealthyRunTimer.unref === 'function') {
+    gpuHealthyRunTimer.unref();
+}
+
 app.on('child-process-gone', (event, details) => {
     if (details && details.type === 'GPU') {
         lastGpuGone = { at: Date.now(), details };
     }
-    console.error('[MAIN] child-process-gone:', details);
-    appendIapTrace('app.child-process-gone', details || null);
+    // Contexto do fallback junto do crash de GPU: mostra em qual degrau a
+    // máquina estava e quantos crashes de boot já aconteceram (ver gpu-policy.js).
+    const childGonePayload = (details && details.type === 'GPU')
+        ? Object.assign({}, details, { gpuPolicy: gpuPolicy.getGpuPolicySnapshot(app) })
+        : (details || null);
+    console.error('[MAIN] child-process-gone:', childGonePayload);
+    appendIapTrace('app.child-process-gone', childGonePayload);
     if (telemetry && typeof telemetry.captureTelemetryEvent === 'function') {
-        telemetry.captureTelemetryEvent('app.child-process-gone', details || null);
+        telemetry.captureTelemetryEvent('app.child-process-gone', childGonePayload);
     }
 
     // Fonte primária da contagem: `gpu-process-crashed` é deprecado no Electron
@@ -6226,7 +6250,8 @@ app.on('gpu-process-crashed', (event, killed) => {
     const gpuGone = (cached && cached.reason === expectedReason) ? cached : null;
     const gpuCrashDetails = Object.assign(
         { killed: !!killed, reason: expectedReason },
-        gpuGone ? { exitCode: gpuGone.exitCode, serviceName: gpuGone.serviceName, type: gpuGone.type } : {}
+        gpuGone ? { exitCode: gpuGone.exitCode, serviceName: gpuGone.serviceName, type: gpuGone.type } : {},
+        { gpuPolicy: gpuPolicy.getGpuPolicySnapshot(app) }
     );
 
     console.error('[MAIN] gpu-process-crashed:', gpuCrashDetails);
