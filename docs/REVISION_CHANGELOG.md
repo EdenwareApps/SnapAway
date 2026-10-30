@@ -1,4 +1,26 @@
 # Changelog - Revisão de Implementação Microsoft Store
+## 🚀 1.2.6 (30 de Outubro de 2026)
+
+Bump `1.2.5 → 1.2.6` para eliminar os dois crashes fatais que mais apareciam no Sentry: o processo **GPU** morrendo na enumeração de displays do DxDiag (`ELECTRON-1H` / `ELECTRON-S`) e o **renderer** morrendo ao abrir o menu de contexto sobre um `<input>` (`ELECTRON-F`).
+
+### 1. Fallback de GPU reage ao crash de boot e escala em dois níveis
+
+- Diagnóstico: o crash é `EXCEPTION_ACCESS_VIOLATION_READ` em `GetWmiPerferredMonitorSourceMode` (`dxdiagn.dll`), dentro do processo GPU, já no boot — o Chromium chama o DxDiag para enumerar monitores e o driver de vídeo quebra.
+- O fallback anterior exigia **dois** crashes e deduplicava por timestamp com janela cega de 10 s. Como o Chromium derruba o browser após ~3 crashes de GPU em ~60 s, os dois crashes de boot caíam no "já contei" e a aceleração de hardware **nunca** era desligada: o usuário ficava em loop de reinício.
+- `src/main/gpu-policy.js`: o dedupe agora agrupa o par de eventos **do mesmo crash** (fontes diferentes dentro de 5 s); mesma fonte ou intervalo maior conta como crash novo (`CRASH_PAIR_DEDUPE_MS`).
+- Crash de GPU nos primeiros 20 s do processo desliga a GPU na hora (`BOOT_CRASH_WINDOW_MS`), sem esperar o segundo.
+- Execução saudável de 60 s (`GPU_HEALTHY_RUN_MS` em `src/main/index.js`) zera o contador de crashes, então um crash isolado dias depois não soma com o anterior.
+- Fallback em dois níveis (`MAX_FALLBACK_TIER = 2`): **tier 1** software + compositing desligado, **tier 2** swiftshader + d3d11 desligado, com limite de relançamentos para não virar loop infinito.
+- Estado antigo (só `disabled`) continua sendo lido, sem perder a configuração de quem já tinha caído no fallback.
+- `src/main/telemetry.js` passa a registrar tier, contagem de crashes, monitores e build do Windows, para correlacionar os crashes com a configuração de vídeo real.
+
+### 2. Menu de contexto nativo suprimido sobre campos de entrada
+
+- `ELECTRON-F` é bug do **Chromium 120**, não do app: `ContextMenuController::ShowContextMenu` chama `HTMLElement::AltText()` para qualquer elemento; em um `<input>` isso vai para `HTMLInputElement::AltText` → `Element::GetLocale` → `Locale::Create` → `LCIDFromLocaleInternal`, que derruba o renderer (`crashed_url = app:///out/renderer/index.html`).
+- O app não usa o menu de contexto do Chromium: o menu da bandeja é `Menu` nativo e o botão flutuante trata o clique direito via IPC. Um `preventDefault()` global no `contextmenu` (`src/renderer/index.html`) evita o caminho que quebra sem tirar nenhuma funcionalidade.
+- Verificado em Electron 28.3.3: com a guarda o `webContents` deixa de emitir `context-menu` ao clicar com o botão direito sobre um `<input>`, e o handler do botão flutuante continua recebendo o evento.
+- Cobre todos os inputs de uma vez (`App.svelte`, `ShortcutSetter.svelte`, `LicenseActivator.svelte`, `ProModal.svelte`), todos servidos pela mesma página.
+
 ## 🚀 1.2.5 (25 de Outubro de 2026)
 
 Bump `1.2.4 → 1.2.5` para transformar o primeiro uso (e o uso de quem aperta o atalho sem alvo) em algo **compreensível**: um tour guiado que só avança com a tecla física pressionada, um aviso quando não há janela-alvo selecionada e a tradução completa das 18 chaves que faltavam nos 19 idiomas.
