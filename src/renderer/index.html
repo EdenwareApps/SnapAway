@@ -6,6 +6,18 @@
     <!-- app styles are imported by renderer.js -->
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <script>
+      // ELECTRON-F: no Chromium 120 (Electron 28) abrir o menu de contexto nativo
+      // sobre um <input> percorre HTMLInputElement::AltText() ->
+      // Element::GetLocale() -> Locale::Create() e derruba o processo renderer
+      // (EXCEPTION_ACCESS_VIOLATION_READ / 0x8 em LCIDFromLocaleInternal).
+      // O app não usa o menu de contexto do Chromium (o menu da bandeja é nativo
+      // e o botão flutuante trata o clique via IPC), então suprimimos o default
+      // de forma global: o caminho que quebra nunca chega a ser executado.
+      document.addEventListener('contextmenu', (event) => {
+        event.preventDefault();
+      }, true);
+    </script>
     <style>
       :root {
         --default-font-color: CanvasText;
